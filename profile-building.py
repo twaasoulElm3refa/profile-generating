@@ -10,6 +10,7 @@ import os
 from dotenv import load_dotenv
 import json
 from openai import OpenAI
+import uvicorn
 
 # تحميل متغيرات البيئة
 load_dotenv()
