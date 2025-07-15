@@ -1,12 +1,6 @@
 from fastapi import FastAPI
 from database import fetch_profile_data ,insert_generated_profile
-from pydantic import BaseModel
-from typing import Optional
-from fastapi.responses import FileResponse
-#import mysql.connector
-#import datetime
 import os
-#from weasyprint import HTML
 from dotenv import load_dotenv
 import json
 from openai import OpenAI
