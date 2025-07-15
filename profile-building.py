@@ -68,4 +68,4 @@ def profile_generating_tool(user_id):
 
     save_data= insert_generated_profile(user_id,data['organization_name'],generated_profile)
 
-    return generated_profile
+    return {"generated_profile":generated_profile}
