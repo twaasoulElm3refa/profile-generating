@@ -6,11 +6,11 @@ import os
 
 load_dotenv()  # يبحث عن .env في مجلد المشروع الحالي
 
-db_host = os.getenv("DB_HOST")
-db_port = os.getenv("DB_PORT")
-db_user = os.getenv("DB_USER")
-db_password = os.getenv("DB_PASSWORD")
-db_name = os.getenv("DB_NAME")
+db_host = os.getenv("db_host")
+db_port = os.getenv("db_port")
+db_user = os.getenv("db_user")
+db_password = os.getenv("db_password")
+db_name = os.getenv("db_name")
 
 
 def get_db_connection():
@@ -61,7 +61,7 @@ def fetch_profile_data(user_id: str ):
 
 
 
-def insert_generated_profile(user_id, organization_name, generated_profile):
+def insert_generated_profile(user_id, organization_name, generated_profile, input_type='Using FORM'):
     connection = get_db_connection()
     if connection is None:
         return False
@@ -69,11 +69,11 @@ def insert_generated_profile(user_id, organization_name, generated_profile):
     try:
         cursor = connection.cursor()
         query = """
-        INSERT INTO wpl3_profile_result (user_id, organization_name, generated_profile)
-        VALUES (%s, %s, %s)
+        INSERT INTO wpl3_profile_result (user_id, organization_name, generated_profile,input_type)
+        VALUES (%s, %s, %s , %s)
         ON DUPLICATE KEY UPDATE generated_profile = VALUES(generated_profile)
         """
-        cursor.execute(query, (user_id, organization_name, generated_profile))
+        cursor.execute(query, (user_id, organization_name, generated_profile,input_type))
         connection.commit()
         return True
     except Error as e:
