@@ -3,8 +3,8 @@ from database import fetch_profile_data ,insert_generated_profile
 from pydantic import BaseModel
 from typing import Optional
 from fastapi.responses import FileResponse
-import mysql.connector
-import datetime
+#import mysql.connector
+#import datetime
 import os
 #from weasyprint import HTML
 from dotenv import load_dotenv
@@ -33,7 +33,7 @@ def load_examples_from_json(json_path="example_profiles.json"):
 
 def generate_profile_model(data, examples):
 
-    client = OpenAI(api_key)
+    client = OpenAI(api_key=api_key)
     examples_text = "\n\n".join(examples[:2])  # نرسل أول مثالين فقط لتقليل الطول
     prompt=f'''أنت خبير متخصص في كتابة الملفات التعريفية للشركات (Company Profiles)، وتعمل كمستشار استراتيجي في تطوير الهوية المؤسسية والعرض الاحترافي للخدمات.
 ستتلقى مجموعة من الملفات تتضمن محتوى خام وتعريفي من عدة شركات{examples_text}، دورك هو أن تحلل هذه الملفات بدقة، وتستخلص منها الأسلوب الاحترافي الأمثل لبناء ملف تعريفي متميز ومتكامل لشركة معلوماتها فى {data}مع ذكر الرؤيه والرساله فى فقرات منفصله .

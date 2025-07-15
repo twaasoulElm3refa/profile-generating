@@ -25,8 +25,6 @@ def get_db_connection():
 
         if connection.is_connected():
             print("✅ Connected!")
-            cursor = connection.cursor()
-            cursor.execute("SET time_zone = 'Africa/Cairo';")
             return connection
     except Error as e:
         print("❌ Failed.")
@@ -73,7 +71,7 @@ def insert_generated_profile(user_id, organization_name, generated_profile):
         query = """
         INSERT INTO wpl3_profile_result (user_id, organization_name, generated_profile)
         VALUES (%s, %s, %s)
-        ON DUPLICATE KEY UPDATE article = VALUES(generated_profile)
+        ON DUPLICATE KEY UPDATE generated_profile = VALUES(generated_profile)
         """
         cursor.execute(query, (user_id, organization_name, generated_profile))
         connection.commit()
