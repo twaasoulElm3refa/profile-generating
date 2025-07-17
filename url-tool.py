@@ -1,9 +1,7 @@
 import requests
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin, urlparse
-
 from fastapi import Query
-
 from fastapi import FastAPI
 from database import fetch_profile_data ,insert_generated_profile
 from pydantic import BaseModel
@@ -19,7 +17,6 @@ load_dotenv()
 
 app = FastAPI()
 api_key=os.getenv("OPENAI_API_KEY")
-
 
 def extract_info_from_url_and_subpages(base_url, max_pages=5):
     visited = set()
@@ -151,15 +148,12 @@ def generate_profile_model(data, examples):
 def profile_from_url(user_id ,url: str = Query(..., description="Company website URL") ):
     # استخرج البيانات من الرابط
     extracted_data = extract_info_from_url_and_subpages(url)
-    print("✅ Extracted data:", extracted_data)
-
+    
     # نقرأ الأمثلة
     loaded_examples = load_examples_from_json()
 
     # توليد البروفايل
     generated_profile = generate_profile_model(extracted_data, loaded_examples)
-    print("\n✅ النص الناتج:")
-    print(generated_profile)
 
     input_type='Using URL'
     # ممكن تحفظه في db إذا عندك جدول خاص بالرابط
