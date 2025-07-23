@@ -6,11 +6,11 @@ import os
 
 load_dotenv()  # يبحث عن .env في مجلد المشروع الحالي
 
-db_host = os.getenv("db_host")
-db_port = os.getenv("db_port")
-db_user = os.getenv("db_user")
-db_password = os.getenv("db_password")
-db_name = os.getenv("db_name")
+db_host = os.getenv("DB_HOST")
+db_port = os.getenv("DB_PORT")
+db_user = os.getenv("DB_USER")
+db_password = os.getenv("DB_PASSWORD")
+db_name = os.getenv("DB_NAME")
 
 
 def get_db_connection():
