@@ -57,10 +57,12 @@ def profile_generating_tool(user_id):
 
     # نقرأها من جديد للتجربة
     loaded_examples = load_examples_from_json()
-
-    # توليد البروفايل
-    generated_profile = generate_profile_model(data, loaded_examples)
-
-    save_data= insert_generated_profile(user_id,data['organization_name'],generated_profile)
-
-    return JSONResponse(content={"generated_profile": generated_profile})
+    try:
+        # توليد البروفايل
+        generated_profile = generate_profile_model(data, loaded_examples)
+    
+        save_data= insert_generated_profile(user_id,data['organization_name'],generated_profile)
+        return JSONResponse(content={"generated_profile": generated_profile})
+     except Exception as e:
+        # log and return a useful message
+        return JSONResponse(content={"error": str(e)}, status_code=500)
