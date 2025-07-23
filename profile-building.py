@@ -9,19 +9,16 @@ import uvicorn
 
 # تحميل متغيرات البيئة
 load_dotenv()
-
 app = FastAPI()
 
 # إنشاء مجلد للملفات لو مش موجود
 os.makedirs("generated_pdf", exist_ok=True)
-
 # إعداد اتصال بقاعدة البيانات
 api_key=os.getenv("OPENAI_API_KEY")
 
 def load_examples_from_json(json_path="example_profiles.json"):
     with open(json_path, "r", encoding="utf-8") as f:
         return json.load(f)
-
 
 def generate_profile_model(data, examples):
 
@@ -54,13 +51,11 @@ def profile_generating_tool(user_id):
 
     all_data= fetch_profile_data(user_id)
     data=all_data[-1]
-
     # نقرأها من جديد للتجربة
     loaded_examples = load_examples_from_json()
     try:
         # توليد البروفايل
         generated_profile = generate_profile_model(data, loaded_examples)
-    
         save_data= insert_generated_profile(user_id,data['organization_name'],generated_profile)
         return JSONResponse(content={"generated_profile": generated_profile})
      except Exception as e:
