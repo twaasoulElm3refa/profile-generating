@@ -1,4 +1,5 @@
 from fastapi import FastAPI
+from fastapi.responses import JSONResponse
 from database import fetch_profile_data ,insert_generated_profile
 import os
 from dotenv import load_dotenv
@@ -62,4 +63,4 @@ def profile_generating_tool(user_id):
 
     save_data= insert_generated_profile(user_id,data['organization_name'],generated_profile)
 
-    return {"generated_profile":generated_profile}
+    return JSONResponse(content={"generated_profile": generated_profile})
