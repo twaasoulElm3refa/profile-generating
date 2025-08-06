@@ -1,4 +1,5 @@
 import requests
+from fastapi.responses import JSONResponse
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin, urlparse
 from fastapi import Query
@@ -165,4 +166,5 @@ def profile_from_url(user_id ,url: str = Query(..., description="Company website
     except Exception as e:
         # log and return a useful message
         return JSONResponse(content={"error": str(e)}, status_code=500)
+
 
