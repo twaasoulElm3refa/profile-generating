@@ -145,7 +145,7 @@ def generate_profile_model(data, examples):
 
 
 
-@app.get("/profile-generating-tool-from-url/{user_id}/")
+@app.get("/profile-url/{user_id}/")
 def profile_from_url(user_id ,url: str = Query(..., description="Company website URL") ):
     try:
         # استخرج البيانات من الرابط
@@ -166,5 +166,6 @@ def profile_from_url(user_id ,url: str = Query(..., description="Company website
     except Exception as e:
         # log and return a useful message
         return JSONResponse(content={"error": str(e)}, status_code=500)
+
 
 
