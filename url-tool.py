@@ -146,8 +146,7 @@ def generate_profile_model(data, examples):
 @app.get("/profile-url/{user_id}/")
 def profile_from_url(user_id: int,url: str = Query(..., description="Company website URL") ):
     try:
-        if user_id is None or not url:
-            raise ValueError("user_id and url must not be None")
+        print (user_id)
         # استخرج البيانات من الرابط
         extracted_data = extract_info_from_url_and_subpages(url)
     
@@ -167,6 +166,7 @@ def profile_from_url(user_id: int,url: str = Query(..., description="Company web
     except Exception as e:
         # log and return a useful message
         return JSONResponse(content={"error": str(e)}, status_code=500)
+
 
 
 
