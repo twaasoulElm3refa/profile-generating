@@ -146,18 +146,23 @@ def generate_profile_model(data, examples):
 
 @app.get("/profile-generating-tool-from-url/{user_id}/")
 def profile_from_url(user_id ,url: str = Query(..., description="Company website URL") ):
-    # استخرج البيانات من الرابط
-    extracted_data = extract_info_from_url_and_subpages(url)
+    try:
+        # استخرج البيانات من الرابط
+        extracted_data = extract_info_from_url_and_subpages(url)
     
-    # نقرأ الأمثلة
-    loaded_examples = load_examples_from_json()
-
-    # توليد البروفايل
-    generated_profile = generate_profile_model(extracted_data, loaded_examples)
-
-    input_type='Using URL'
-    # ممكن تحفظه في db إذا عندك جدول خاص بالرابط
-    save_data= insert_generated_profile(user_id,None,generated_profile,input_type)
-    # أو ترسله مباشرة للواجهة
-    return {"profile": generated_profile}
+        # نقرأ الأمثلة
+        loaded_examples = load_examples_from_json()
+    
+        # توليد البروفايل
+        generated_profile = generate_profile_model(extracted_data, loaded_examples)
+    
+        input_type='Using URL'
+        #  تحفظه في db 
+        save_data= insert_generated_profile(user_id,None,generated_profile,input_type)
+        # ترسله  للواجهة
+        #return {"profile": generated_profile}
+        return JSONResponse(content={"profile": generated_profile})
+    except Exception as e:
+        # log and return a useful message
+        return JSONResponse(content={"error": str(e)}, status_code=500)
 
