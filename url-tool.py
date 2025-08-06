@@ -143,11 +143,11 @@ def generate_profile_model(data, examples):
     )
     return response.choices[0].message.content
 
-
-
 @app.get("/profile-url/{user_id}/")
 def profile_from_url(user_id ,url: str = Query(..., description="Company website URL") ):
     try:
+        if user_id is None or not url:
+            raise ValueError("user_id and url must not be None")
         # استخرج البيانات من الرابط
         extracted_data = extract_info_from_url_and_subpages(url)
     
@@ -156,7 +156,8 @@ def profile_from_url(user_id ,url: str = Query(..., description="Company website
     
         # توليد البروفايل
         generated_profile = generate_profile_model(extracted_data, loaded_examples)
-    
+        if not generated_profile:
+            return JSONResponse(content={"error": "Generated profile is empty."}, status_code=400)
         input_type='Using URL'
         #  تحفظه في db 
         save_data= insert_generated_profile(user_id,None,generated_profile,input_type)
@@ -166,7 +167,3 @@ def profile_from_url(user_id ,url: str = Query(..., description="Company website
     except Exception as e:
         # log and return a useful message
         return JSONResponse(content={"error": str(e)}, status_code=500)
-
-
-
-
