@@ -144,7 +144,7 @@ def generate_profile_model(data, examples):
     return response.choices[0].message.content
 
 @app.get("/profile-url/{user_id}/")
-def profile_from_url(user_id ,url: str = Query(..., description="Company website URL") ):
+def profile_from_url(user_id: int,,url: str = Query(..., description="Company website URL") ):
     try:
         if user_id is None or not url:
             raise ValueError("user_id and url must not be None")
@@ -167,4 +167,5 @@ def profile_from_url(user_id ,url: str = Query(..., description="Company website
     except Exception as e:
         # log and return a useful message
         return JSONResponse(content={"error": str(e)}, status_code=500)
+
 
