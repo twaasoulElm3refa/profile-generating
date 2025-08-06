@@ -1,12 +1,12 @@
 import requests
 from fastapi.responses import JSONResponse
 from bs4 import BeautifulSoup
-from urllib.parse import urljoin, urlparse
+#from urllib.parse import urljoin, urlparse
 from fastapi import Query
 from fastapi import FastAPI
 from database import fetch_profile_data ,insert_generated_profile
-from pydantic import BaseModel
-from typing import Optional
+#from pydantic import BaseModel
+#from typing import Optional
 from fastapi.responses import FileResponse
 import os
 from dotenv import load_dotenv
@@ -166,6 +166,7 @@ def profile_from_url(user_id ,url: str = Query(..., description="Company website
     except Exception as e:
         # log and return a useful message
         return JSONResponse(content={"error": str(e)}, status_code=500)
+
 
 
 
