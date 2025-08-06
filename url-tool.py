@@ -155,8 +155,8 @@ def profile_from_url(user_id: int,url: str = Query(..., description="Company web
     
         # توليد البروفايل
         generated_profile = generate_profile_model(extracted_data, loaded_examples)
-        if not generated_profile:
-            return JSONResponse(content={"error": "Generated profile is empty."}, status_code=400)
+        print(generated_profile)
+        
         input_type='Using URL'
         #  تحفظه في db 
         save_data= insert_generated_profile(user_id,None,generated_profile,input_type)
@@ -166,7 +166,3 @@ def profile_from_url(user_id: int,url: str = Query(..., description="Company web
     except Exception as e:
         # log and return a useful message
         return JSONResponse(content={"error": str(e)}, status_code=500)
-
-
-
-
