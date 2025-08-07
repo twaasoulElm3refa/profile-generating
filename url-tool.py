@@ -160,12 +160,14 @@ def profile_from_url(user_id: int,url: str = Query(..., description="Company web
     input_type='Using URL'
     #  تحفظه في db 
     save_data= insert_generated_profile(user_id,None,generated_profile,input_type)
+    return JSONResponse(content={"profile": generated_profile}, status_code=200)
     # ترسله  للواجهة
-    return {"profile": generated_profile}
-    #return JSONResponse(content={"profile": generated_profile})
+    #return {"profile": generated_profile}
+    
     #except Exception as e:
         #log and return a useful message
         #return JSONResponse(content={"error": str(e)}, status_code=500)
+
 
 
 
