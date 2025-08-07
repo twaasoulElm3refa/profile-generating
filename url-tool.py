@@ -1,5 +1,6 @@
 import requests
 from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin, urlparse
 from fastapi import Query
@@ -15,9 +16,20 @@ from openai import OpenAI
 
 # تحميل متغيرات البيئة
 load_dotenv()
-
 app = FastAPI()
 api_key=os.getenv("OPENAI_API_KEY")
+
+origins = [
+    "https://11ai.ellevensa.com",  # Replace with your WordPress site domain
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,  # Allows specific origins to make requests
+    allow_credentials=True,
+    allow_methods=["GET", "POST"],  # Allows specific methods (GET, POST, etc.)
+    allow_headers=["*"],  # Allows all headers (or specify as needed)
+)
 
 def extract_info_from_url_and_subpages(base_url, max_pages=5):
     visited = set()
@@ -146,6 +158,8 @@ def generate_profile_model(data, examples):
 @app.get("/profile-url/{user_id}/")
 def profile_from_url(user_id: int,url: str = Query(..., description="Company website URL") ):
     #try:
+    if not url or not url.startswith("http"):
+        raise HTTPException(status_code=400, detail="Invalid URL")
     print (user_id)
     # استخرج البيانات من الرابط
     extracted_data = extract_info_from_url_and_subpages(url)
@@ -160,13 +174,14 @@ def profile_from_url(user_id: int,url: str = Query(..., description="Company web
     input_type='Using URL'
     #  تحفظه في db 
     save_data= insert_generated_profile(user_id,None,generated_profile,input_type)
-    return JSONResponse(content={"profile": generated_profile}, status_code=200)
+    return JSONResponse(content={"profile": generated_profile}, status_code=200,  media_type="application/json")
     # ترسله  للواجهة
     #return {"profile": generated_profile}
     
     #except Exception as e:
         #log and return a useful message
         #return JSONResponse(content={"error": str(e)}, status_code=500)
+
 
 
 
