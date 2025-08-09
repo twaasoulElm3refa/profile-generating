@@ -77,26 +77,26 @@ def call_openai_api_with_retry(examples , data: str ,retries: int = 3, backoff: 
         ✨ الهدف:
         إنشاء ملف تعريفي قوي يعبر عن روح الشركة بأسلوب مستوحى ومتعلَّم من الأمثلة الواردة، مع ملء أي نقص في بيانات الموقع تلقائيًا بأسلوب احترافي.
         """
-        for i in range(retries):
-            try:
-                response = client.chat.completions.create(
-                model="gpt-4o",
-                messages=[
-                    {"role": "user", "content": prompt}
-                ],
-                temperature=0.7,
-                max_tokens=150
-                )
-                return response
-            except openai.error.RateLimitError as e:
-                if i < retries - 1:
-                    wait_time = backoff * (i + 1)  # Exponential backoff
-                    print(f"Rate limit exceeded. Retrying in {wait_time} seconds...")
-                    time.sleep(wait_time)  # Wait before retrying
-                else:
-                    raise HTTPException(status_code=429, detail="Rate limit exceeded, please try again later.")
-            except Exception as e:
-                raise HTTPException(status_code=500, detail=str(e)) 
+    for i in range(retries):
+        try:
+            response = client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.7,
+            max_tokens=150
+            )
+            return response
+        except openai.error.RateLimitError as e:
+            if i < retries - 1:
+                wait_time = backoff * (i + 1)  # Exponential backoff
+                print(f"Rate limit exceeded. Retrying in {wait_time} seconds...")
+                time.sleep(wait_time)  # Wait before retrying
+            else:
+                raise HTTPException(status_code=429, detail="Rate limit exceeded, please try again later.")
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e)) 
 
 def extract_info_from_url_and_subpages(base_url, max_pages=5):
     visited = set()
@@ -259,5 +259,6 @@ def profile_from_url(user_id: int,url: str = Query(..., description="Company web
     #except Exception as e:
         #log and return a useful message
         #return JSONResponse(content={"error": str(e)}, status_code=500)
+
 
 
