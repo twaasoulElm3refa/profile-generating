@@ -80,11 +80,13 @@ def call_openai_api_with_retry(examples , data: str ,retries: int = 3, backoff: 
 
     for i in range(retries):
         try:
-            response = openai.Completion.create(
-                model="gpt-4o",
-                prompt=prompt,
-                max_tokens=150,
-                temperature=0.7
+            response = client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.7,
+            max_tokens=150
             )
             return response
         except openai.error.RateLimitError as e:
@@ -256,5 +258,6 @@ def profile_from_url(user_id: int,url: str = Query(..., description="Company web
     #except Exception as e:
         #log and return a useful message
         #return JSONResponse(content={"error": str(e)}, status_code=500)
+
 
 
