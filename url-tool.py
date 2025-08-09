@@ -241,6 +241,7 @@ def profile_from_url(user_id: int,url: str = Query(..., description="Company web
 
     try:
         response = call_openai_api_with_retry(extracted_data,loaded_examples)
+        generated_profile = response.choices[0].message.content
         input_type='Using URL'
         #  تحفظه في db 
         save_data= insert_generated_profile(user_id,None,generated_profile,input_type)
@@ -258,6 +259,7 @@ def profile_from_url(user_id: int,url: str = Query(..., description="Company web
     #except Exception as e:
         #log and return a useful message
         #return JSONResponse(content={"error": str(e)}, status_code=500)
+
 
 
 
