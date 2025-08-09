@@ -18,7 +18,7 @@ import openai
 # تحميل متغيرات البيئة
 load_dotenv()
 app = FastAPI()
-api_key=os.getenv("OPENAI_API_KEY")
+#api_key=os.getenv("OPENAI_API_KEY")
 
 origins = [
     "https://11ai.ellevensa.com",  # Replace with your WordPress site domain
@@ -98,7 +98,7 @@ def call_openai_api_with_retry(examples , data: str ,retries: int = 3, backoff: 
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e)) 
 
-def extract_info_from_url_and_subpages(base_url, max_pages=5):
+def extract_info_from_url_and_subpages(base_url, max_pages=7):
     visited = set()
     to_visit = [base_url]
     all_texts = []
@@ -165,63 +165,6 @@ def load_examples_from_json(json_path="example_profiles.json"):
     with open(json_path, "r", encoding="utf-8") as f:
         return json.load(f)
 
-
-'''def generate_profile_model(data, examples):
-
-    client = OpenAI(api_key=api_key)
-    examples_text = "\n\n".join(examples[:2])  # نرسل أول مثالين فقط لتقليل الطول
-    prompt=f"""
-أنت خبير محترف في إعداد الملفات التعريفية للشركات (Company Profiles)، وتعمل كمستشار استراتيجي لتطوير الهوية المؤسسية وصياغة المحتوى التسويقي الاحترافي.
-
-ستتلقى:
-- أمثلة حقيقية لملفات تعريفية ناجحة لعدة شركات:
-{examples_text}
-
-ومعلومات أساسية تم استخراجها مباشرةً من موقع الشركة (URL):
-{data}
-
----
-
-📌 المطلوب منك:
-1️⃣ تحليل الأمثلة الواردة لاستخلاص أسلوب احترافي متكامل في كتابة الملفات التعريفية.
-2️⃣ الاستفادة من البيانات المستخرجة من الموقع (url) كما هي تمامًا، وإن لم تكن المعلومات مكتملة؛ قم بإكمالها وابتكار محتوى مكمل بأسلوب متناسق.
-3️⃣ كتابة ملف تعريفي متكامل يشمل:
-   - من نحن
-   - الرؤية (في فقرة منفصلة)
-   - الرسالة (في فقرة منفصلة)
-   - ما الذي نُقدمه
-   - لماذا نحن
-   - أعمالنا
-   - خدماتنا (مفصلة بنقاط)
-   - أسلوبنا
-   - معلومات التواصل
-
----
-
-✅ تعليمات أساسية:
-- استخدم أسلوب عصري وجذاب يوازن بين النص التسويقي والمعلوماتي.
-- لا تعتمد على هيكل جاهز حرفيًا؛ ابتكر ترتيبًا تدريجيًا يناسب مجال الشركة.
-- اجعل النص غنيًا بالتفاصيل ويعكس الهوية التنافسية المستخلصة من الأمثلة.
-- استخدم لغة مؤسسية سلسة ومتماسكة بصريًا ومضمونيًا.
-- افترض أن الملف سيُستخدم للطباعة الفاخرة والعروض الإلكترونية والتقديمية.
-- الملف يجب أن يُجسّد هوية الشركة ويقنع الجهات الاستثمارية والعملاء المستهدفين.
-
----
-
-✨ الهدف:
-إنشاء ملف تعريفي قوي يعبر عن روح الشركة بأسلوب مستوحى ومتعلَّم من الأمثلة الواردة، مع ملء أي نقص في بيانات الموقع تلقائيًا بأسلوب احترافي.
-"""
-
-
-    response = client.chat.completions.create(
-        model="gpt-4o",
-        messages=[
-            {"role": "user", "content": prompt}
-        ],
-        temperature=0.7
-    )
-    return response.choices[0].message.content'''
-
 @app.get("/profile-url/{user_id}/")
 def profile_from_url(user_id: int,url: str = Query(..., description="Company website URL") ):
     #try:
@@ -249,16 +192,3 @@ def profile_from_url(user_id: int,url: str = Query(..., description="Company web
     except HTTPException as e:
         raise e  # Forward HTTPException errors (e.g., rate limits)
     
-    #input_type='Using URL'
-    #  تحفظه في db 
-    #save_data= insert_generated_profile(user_id,None,generated_profile,input_type)
-    #return JSONResponse(content={"profile": generated_profile}, status_code=200,  media_type="application/json")
-    # ترسله  للواجهة
-    #return {"profile": generated_profile}
-    
-    #except Exception as e:
-        #log and return a useful message
-        #return JSONResponse(content={"error": str(e)}, status_code=500)
-
-
-
