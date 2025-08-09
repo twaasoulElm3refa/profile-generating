@@ -11,7 +11,7 @@ from fastapi.responses import FileResponse
 import os
 from dotenv import load_dotenv
 import json
-from openai import OpenAI
+import openai #import OpenAI
 import time
 
 # تحميل متغيرات البيئة
@@ -255,3 +255,4 @@ def profile_from_url(user_id: int,url: str = Query(..., description="Company web
     #except Exception as e:
         #log and return a useful message
         #return JSONResponse(content={"error": str(e)}, status_code=500)
+
