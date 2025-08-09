@@ -241,11 +241,11 @@ def profile_from_url(user_id: int,url: str = Query(..., description="Company web
     try:
         #response = call_openai_api_with_retry(extracted_data,loaded_examples)
         #generated_profile = response.choices[0].message.content
-        generated_profile = "The result will be here "
+        generated_profile = extracted_data
         input_type='Using URL'
         #  تحفظه في db 
         save_data= insert_generated_profile(user_id,None,generated_profile,input_type)
-        return {"profile": response.choices[0].message.content}
+        return {"profile": generated_profile}
     except HTTPException as e:
         raise e  # Forward HTTPException errors (e.g., rate limits)
     
@@ -259,3 +259,4 @@ def profile_from_url(user_id: int,url: str = Query(..., description="Company web
     #except Exception as e:
         #log and return a useful message
         #return JSONResponse(content={"error": str(e)}, status_code=500)
+
