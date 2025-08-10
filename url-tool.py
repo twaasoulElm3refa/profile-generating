@@ -5,7 +5,7 @@ from bs4 import BeautifulSoup
 from urllib.parse import urljoin, urlparse
 from fastapi import FastAPI, Query, HTTPException
 from database import fetch_profile_data ,insert_generated_profile
-#from pydantic import BaseModel
+from pydantic import BaseModel
 #from typing import Optional
 from fastapi.responses import FileResponse
 import os
@@ -36,16 +36,13 @@ app.add_middleware(
 def call_openai_api_with_retry(examples , data: str ,retries: int = 3, backoff: int = 5):
     client = OpenAI(api_key=api_key)
     examples_text = "\n\n".join(examples[:2])  # نرسل أول مثالين فقط لتقليل الطول
-    prompt=f"""
-        أنت خبير محترف في إعداد الملفات التعريفية للشركات (Company Profiles)، وتعمل كمستشار استراتيجي لتطوير الهوية المؤسسية وصياغة المحتوى التسويقي الاحترافي.
-        
+    prompt=f""" أنت خبير محترف في إعداد الملفات التعريفية للشركات (Company Profiles)، وتعمل كمستشار استراتيجي لتطوير الهوية المؤسسية وصياغة المحتوى التسويقي الاحترافي
         ستتلقى:
         - أمثلة حقيقية لملفات تعريفية ناجحة لعدة شركات:
         {examples_text}
         
         ومعلومات أساسية تم استخراجها مباشرةً من موقع الشركة (URL):
         {data}
-        
         ---
         
         📌 المطلوب منك:
@@ -85,7 +82,6 @@ def call_openai_api_with_retry(examples , data: str ,retries: int = 3, backoff: 
                 {"role": "user", "content": prompt}
             ],
             temperature=0.7,
-            max_tokens=150
             )
             return response
         except openai.error.RateLimitError as e:
@@ -192,5 +188,6 @@ def profile_from_url(user_id: int,url: str = Query(..., description="Company web
     except HTTPException as e:
         raise e  # Forward HTTPException errors (e.g., rate limits)
     
+
 
 
