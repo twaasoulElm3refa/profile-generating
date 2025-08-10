@@ -18,7 +18,7 @@ import openai
 # تحميل متغيرات البيئة
 load_dotenv()
 app = FastAPI()
-#api_key=os.getenv("OPENAI_API_KEY")
+api_key=os.getenv("OPENAI_API_KEY")
 
 origins = [
     "https://11ai.ellevensa.com",  # Replace with your WordPress site domain
@@ -192,4 +192,5 @@ def profile_from_url(user_id: int,url: str = Query(..., description="Company web
     except HTTPException as e:
         raise e  # Forward HTTPException errors (e.g., rate limits)
     
+
 
