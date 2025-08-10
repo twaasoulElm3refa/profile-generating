@@ -18,7 +18,7 @@ import openai
 # تحميل متغيرات البيئة
 load_dotenv()
 app = FastAPI()
-#api_key=os.getenv("OPENAI_API_KEY")
+api_key=os.getenv("OPENAI_API_KEY")
 
 origins = [
     "https://11ai.ellevensa.com",  # Replace with your WordPress site domain
@@ -178,17 +178,12 @@ def profile_from_url(user_id: int,url: str = Query(..., description="Company web
     #print(generated_profile)
 
     try:
-        #response = call_openai_api_with_retry(extracted_data,loaded_examples)
-        #generated_profile = response.choices[0].message.content
-        generated_profile = extracted_data
+        response = call_openai_api_with_retry(loaded_examples,extracted_data)
+        generated_profile = response.choices[0].message.content
+        #generated_profile = extracted_data
         input_type='Using URL'
         #  تحفظه في db 
         save_data= insert_generated_profile(user_id,None,generated_profile,input_type)
         return {"profile": generated_profile}
     except HTTPException as e:
         raise e  # Forward HTTPException errors (e.g., rate limits)
-    
-
-
-
-
