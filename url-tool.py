@@ -291,7 +291,7 @@ def chat(body: ChatIn, authorization: Optional[str] = Header(None)):
     def stream():
         # Use a light, fast model for chat streaming
         response = client.chat.completions.create(
-            model="gpt-4o-mini",
+            model="gpt-5-mini",
             temperature=0.2,
             messages=[
                 {"role": "system", "content": sys_prompt},
@@ -308,4 +308,3 @@ def chat(body: ChatIn, authorization: Optional[str] = Header(None)):
                 yield delta
 
     return StreamingResponse(stream(), media_type="text/plain")
-
