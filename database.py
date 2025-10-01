@@ -61,7 +61,7 @@ def fetch_profile_data(user_id: str ):
 
 
 
-def insert_generated_profile(user_id, organization_name, generated_profile, input_type='Using FORM'):
+def insert_generated_profile(user_id, organization_name, generated_profile, input_type='Using FORM',request_id=None):
     connection = get_db_connection()
     if connection is None:
         return False
@@ -69,11 +69,11 @@ def insert_generated_profile(user_id, organization_name, generated_profile, inpu
     try:
         cursor = connection.cursor()
         query = """
-        INSERT INTO wpl3_profile_result (user_id, organization_name, generated_profile,input_type)
-        VALUES (%s, %s, %s , %s)
+        INSERT INTO wpl3_profile_result (user_id, organization_name, generated_profile,input_type,request_id)
+        VALUES (%s, %s, %s , %s, %s)
         ON DUPLICATE KEY UPDATE generated_profile = VALUES(generated_profile)
         """
-        cursor.execute(query, (user_id, organization_name, generated_profile,input_type))
+        cursor.execute(query, (user_id, organization_name, generated_profile,input_type, request_id))
         connection.commit()
         return True
     except Error as e:
@@ -83,4 +83,3 @@ def insert_generated_profile(user_id, organization_name, generated_profile, inpu
         if connection.is_connected():
             cursor.close()
             connection.close()
-
