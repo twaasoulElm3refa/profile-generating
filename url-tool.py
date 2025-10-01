@@ -12,69 +12,64 @@ from bs4 import BeautifulSoup
 from typing import Optional, List
 from pydantic import BaseModel, Field
 
-from fastapi import FastAPI, Query, HTTPException, Header
-from fastapi.responses import StreamingResponse, JSONResponse, FileResponse
+from fastapi import FastAPI, Query, HTTPException, Header, Request
+from fastapi.responses import StreamingResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 from openai import OpenAI
 import openai  # keep for error classes in some installs
 
-# ---- App init / config -------------------------------------------------------
-
+# -------------------- App init / config --------------------
 load_dotenv()
 app = FastAPI()
 
 api_key = os.getenv("OPENAI_API_KEY")
 if not api_key:
     raise RuntimeError("OPENAI_API_KEY is not set")
-
 client = OpenAI(api_key=api_key)
 
 JWT_SECRET = os.getenv("JWT_SECRET", "CHANGE_THIS_IN_PROD")
 
 origins = [
-    "https://11ai.ellevensa.com",  # <-- your WordPress site
-    # "http://localhost:8000",      # (optional) local test
-    # "http://127.0.0.1:8000",
+    "https://11ai.ellevensa.com",  # your WordPress site
 ]
-
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
     allow_credentials=True,
-    allow_methods=["GET", "POST"],
+    allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
 )
 
 # ---- DB hooks (your code) ----------------------------------------------------
-# Keep your own implementations & imports:
 from database import fetch_profile_data, insert_generated_profile  # noqa: E402
 
-# ---- Models for chat/session -------------------------------------------------
-
+# -------------------- Models --------------------
 class SessionIn(BaseModel):
     user_id: int
     wp_nonce: Optional[str] = None
+    request_id: Optional[str] = None  # <-- carries WP request_id (the row id)
 
 class SessionOut(BaseModel):
     session_id: str
     token: str
+    request_id: Optional[str] = None
 
 class VisibleValue(BaseModel):
     id: Optional[int] = None
     organization_name: Optional[str] = None
     about_press: Optional[str] = None
     press_date: Optional[str] = None
-    article: Optional[str] = None  # <-- used by the WP plugin
+    article: Optional[str] = None  # used by the WP plugin
 
 class ChatIn(BaseModel):
     session_id: str
     user_id: int
     message: str
     visible_values: List[VisibleValue] = Field(default_factory=list)
+    request_id: Optional[str] = None  # <-- for tracing a specific chat turn
 
-# ---- Helpers (JWT + context) -------------------------------------------------
-
+# -------------------- Helpers --------------------
 def _make_jwt(session_id: str, user_id: int) -> str:
     payload = {
         "sid": session_id,
@@ -91,75 +86,51 @@ def _verify_jwt(bearer: Optional[str]):
     try:
         jwt.decode(token, JWT_SECRET, algorithms=["HS256"])
     except jwt.InvalidTokenError:
+        # keep the same message the plugin saw, but now we always accept trimmed tokens
         raise HTTPException(status_code=401, detail="Invalid token")
 
-def _clip(txt: str, max_chars: int) -> str:
+def _clip(txt: Optional[str], max_chars: int) -> str:
     if txt is None:
         return ""
     txt = txt.strip()
-    if len(txt) <= max_chars:
-        return txt
-    return txt[:max_chars] + "…"
+    return txt if len(txt) <= max_chars else txt[:max_chars] + "…"
 
 def _values_to_context(values: List[VisibleValue]) -> str:
     if not values:
         return "لا توجد بيانات مرئية حالياً لهذا المستخدم."
     v = values[0]
     parts = []
-    # These are optional; present only if available
-    if v.organization_name:
-        parts.append(f"اسم المنظمة: {v.organization_name}")
-    if v.about_press:
-        parts.append(f"عن البيان: {v.about_press}")
-    if v.press_date:
-        parts.append(f"تاريخ البيان: {v.press_date}")
-    if v.article:
-        # keep article reasonable in size to control tokens
-        parts.append(f"المحتوى الحالي (مختصر):\n{_clip(v.article, 6000)}")
+    if v.organization_name: parts.append(f"اسم المنظمة: {v.organization_name}")
+    if v.about_press:       parts.append(f"عن البيان: {v.about_press}")
+    if v.press_date:        parts.append(f"تاريخ البيان: {v.press_date}")
+    if v.article:           parts.append(f"المحتوى الحالي (مختصر):\n{_clip(v.article, 6000)}")
     return " | ".join(parts) if parts else "لا توجد تفاصيل كافية."
 
-# ---- Your existing OpenAI call (kept) ---------------------------------------
+# -------------------- Middleware (Request-ID + logging) --------------------
+@app.middleware("http")
+async def add_request_id_and_log(request: Request, call_next):
+    rid = request.headers.get("X-Request-ID") or request.query_params.get("request_id")
+    start = time.time()
+    response = await call_next(request)
+    if rid:
+        response.headers["X-Request-ID"] = str(rid)
+    dur_ms = int((time.time() - start) * 1000)
+    path_q = f"{request.url.path}?{request.url.query}" if request.url.query else request.url.path
+    print(f"[{rid or '-'}] {request.method} {path_q} -> {response.status_code} in {dur_ms}ms")
+    return response
 
+# -------------------- OpenAI call --------------------
 def call_openai_api_with_retry(examples, data: str, retries: int = 3, backoff: int = 5):
-    examples_text = "\n\n".join(examples[:2])  # نرسل أول مثالين فقط لتقليل الطول
-    prompt = f""" أنت خبير محترف في إعداد الملفات التعريفية للشركات (Company Profiles)، وتعمل كمستشار استراتيجي لتطوير الهوية المؤسسية وصياغة المحتوى التسويقي الاحترافي
-        ستتلقى:
-        - أمثلة حقيقية لملفات تعريفية ناجحة لعدة شركات:
-        {examples_text}
-        
-        ومعلومات أساسية تم استخراجها مباشرةً من موقع الشركة (URL):
-        {data}
-        ---
-        
-        📌 المطلوب منك:
-        1️⃣ تحليل الأمثلة الواردة لاستخلاص أسلوب احترافي متكامل في كتابة الملفات التعريفية.
-        2️⃣ الاستفادة من البيانات المستخرجة من الموقع (url) كما هي تمامًا، وإن لم تكن المعلومات مكتملة؛ قم بإكمالها وابتكار محتوى مكمل بأسلوب متناسق.
-        3️⃣ كتابة ملف تعريفي متكامل يشمل:
-           - من نحن
-           - الرؤية (في فقرة منفصلة)
-           - الرسالة (في فقرة منفصلة)
-           - ما الذي نُقدمه
-           - لماذا نحن
-           - أعمالنا
-           - خدماتنا (مفصلة بنقاط)
-           - أسلوبنا
-           - معلومات التواصل
-        
-        ---
-        
-        ✅ تعليمات أساسية:
-        - استخدم أسلوب عصري وجذاب يوازن بين النص التسويقي والمعلوماتي.
-        - لا تعتمد على هيكل جاهز حرفيًا؛ ابتكر ترتيبًا تدريجيًا يناسب مجال الشركة.
-        - اجعل النص غنيًا بالتفاصيل ويعكس الهوية التنافسية المستخلصة من الأمثلة.
-        - استخدم لغة مؤسسية سلسة ومتماسكة بصريًا ومضمونيًا.
-        - افترض أن الملف سيُستخدم للطباعة الفاخرة والعروض الإلكترونية والتقديمية.
-        - الملف يجب أن يُجسّد هوية الشركة ويقنع الجهات الاستثمارية والعملاء المستهدفين.
-        
-        ---
-        
-        ✨ الهدف:
-        إنشاء ملف تعريفي قوي يعبر عن روح الشركة بأسلوب مستوحى ومتعلَّم من الأمثلة الواردة، مع ملء أي نقص في بيانات الموقع تلقائيًا بأسلوب احترافي.
-        """
+    examples_text = "\n\n".join(examples[:2])  # keep short
+    prompt = f"""أنت خبير محترف في إعداد الملفات التعريفية للشركات (Company Profiles)...
+أمثلة:
+{examples_text}
+
+بيانات من الموقع (URL):
+{data}
+
+اكتب ملفًا تعريفياً متكاملاً (من نحن/الرؤية/الرسالة/ما الذي نقدمه/لماذا نحن/أعمالنا/خدماتنا/أسلوبنا/معلومات التواصل) بلغة عربية مؤسسية واضحة ومحترفة، مع عناوين فرعية.
+"""
     for i in range(retries):
         try:
             response = client.chat.completions.create(
@@ -168,18 +139,17 @@ def call_openai_api_with_retry(examples, data: str, retries: int = 3, backoff: i
                 temperature=0.7,
             )
             return response
-        except getattr(openai, "RateLimitError", Exception) as e:  # compatible across lib versions
+        except getattr(openai, "RateLimitError", Exception) as e:
             if i < retries - 1:
                 wait_time = backoff * (i + 1)
-                print(f"Rate limit exceeded. Retrying in {wait_time} seconds...")
+                print(f"Rate limit/transient error. Retrying in {wait_time}s...")
                 time.sleep(wait_time)
             else:
                 raise HTTPException(status_code=429, detail="Rate limit exceeded, please try again later.")
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
 
-# ---- Website extraction (kept) ----------------------------------------------
-
+# -------------------- Extraction --------------------
 def extract_info_from_url_and_subpages(base_url, max_pages=7):
     visited = set()
     to_visit = [base_url]
@@ -194,23 +164,17 @@ def extract_info_from_url_and_subpages(base_url, max_pages=7):
             response.raise_for_status()
             html = response.text
             soup = BeautifulSoup(html, "html.parser")
-
             visited.add(url)
 
-            # collect texts
             page_text = []
-
-            # title
             title = soup.title.string.strip() if soup.title and soup.title.string else ""
             if title:
                 page_text.append(f"Title: {title}")
 
-            # meta description
             desc_tag = soup.find("meta", attrs={"name": "description"})
             if desc_tag and desc_tag.get("content"):
                 page_text.append(f"Description: {desc_tag['content'].strip()}")
 
-            # first two long paragraphs
             paragraphs = soup.find_all("p")
             count = 0
             for p in paragraphs:
@@ -221,9 +185,9 @@ def extract_info_from_url_and_subpages(base_url, max_pages=7):
                 if count >= 2:
                     break
 
-            all_texts.append("\n".join(page_text))
+            if page_text:
+                all_texts.append("\n".join(page_text))
 
-            # next internal links
             for link in soup.find_all("a", href=True):
                 href = link["href"]
                 joined_url = urljoin(base_url, href)
@@ -237,59 +201,94 @@ def extract_info_from_url_and_subpages(base_url, max_pages=7):
             print(f"❌ Error visiting {url}: {e}")
             continue
 
-    combined_text = "\n\n---\n\n".join(all_texts)
-    return combined_text
+    return "\n\n---\n\n".join(all_texts)
 
-# ---- Examples loader (kept) -------------------------------------------------
-
+# -------------------- Examples loader (safe) --------------------
 def load_examples_from_json(json_path="example_profiles.json"):
-    with open(json_path, "r", encoding="utf-8") as f:
-        return json.load(f)
+    try:
+        with open(json_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            if isinstance(data, list):
+                return [x if isinstance(x, str) else json.dumps(x, ensure_ascii=False) for x in data]
+            return [json.dumps(data, ensure_ascii=False)]
+    except Exception as e:
+        # Safe defaults if file missing
+        print(f"⚠️ examples file issue: {e} — using defaults")
+        return [
+            "شركة ألفا — من نحن، الرؤية، الرسالة، خدمات أساسية، لماذا نحن، معلومات التواصل.",
+            "شركة بيتا — من نحن، رؤيتنا، رسالتنا، حلول متقدمة، أسلوب العمل، بيانات الاتصال."
+        ]
 
-# ---- EXISTING ENDPOINT (kept) -----------------------------------------------
+# -------------------- Health --------------------
+@app.get("/health")
+def health():
+    return {"ok": True}
 
+# -------------------- Generator endpoint --------------------
 @app.get("/profile-url/{user_id}/")
-def profile_from_url(user_id: int, url: str = Query(..., description="Company website URL")):
-    if not url or not url.startswith("http"):
+def profile_from_url(
+    user_id: int,
+    url: str = Query(..., description="Company website URL"),
+    request_id: Optional[str] = Query(None, description="WP request id (wpl3_profile_generating_tool.id)"),
+):
+    if not url or not url.startswith(("http://", "https://")):
         raise HTTPException(status_code=400, detail="Invalid URL")
-    print(user_id, url)
-
-    extracted_data = extract_info_from_url_and_subpages(url)
-    loaded_examples = load_examples_from_json()
 
     try:
+        extracted_data  = extract_info_from_url_and_subpages(url)
+        loaded_examples = load_examples_from_json()
+
         response = call_openai_api_with_retry(loaded_examples, extracted_data)
         generated_profile = response.choices[0].message.content
-        input_type = 'Using URL'
-        # save to DB
-        save_data = insert_generated_profile(user_id, None, generated_profile, input_type)
-        return {"profile": generated_profile}
-    except HTTPException as e:
-        raise e
 
-# ---- NEW: Session + Chat (streaming) ----------------------------------------
+        # Save to API-side DB (optional). We also forward request_id if your table has it.
+        try:
+            insert_generated_profile(
+                user_id=user_id,
+                organization_name=None,
+                generated_profile=generated_profile,
+                input_type='Using URL',
+                request_id=request_id  # <-- NEW: pass through
+            )
+        except Exception as db_e:
+            print(f"⚠️ insert_generated_profile failed (non-fatal): {db_e}")
 
+        return {"profile": generated_profile, "request_id": request_id}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"server error: {e}")
+
+# -------------------- Session & Chat --------------------
 @app.post("/session", response_model=SessionOut)
-def create_session(body: SessionIn):
+def create_session(body: SessionIn, x_request_id: Optional[str] = Header(None)):
+    # Echo back the request id we got (prefer header, else body)
+    rid = x_request_id or body.request_id
     sid = str(uuid.uuid4())
     token = _make_jwt(sid, body.user_id)
-    return SessionOut(session_id=sid, token=token)
+    return SessionOut(session_id=sid, token=token, request_id=rid)
 
 @app.post("/chat")
-def chat(body: ChatIn, authorization: Optional[str] = Header(None)):
+def chat(
+    body: ChatIn,
+    authorization: Optional[str] = Header(None),
+    x_request_id: Optional[str] = Header(None)
+):
     _verify_jwt(authorization)
 
+    # prefer header RID; else body.request_id
+    rid = x_request_id or body.request_id
     context = _values_to_context(body.visible_values)
     sys_prompt = (
         "أنت مساعد موثوق يجيب بدقة بالاعتماد على البيانات المرئية الحالية للمستخدم. "
         "إذا كانت المعلومة غير متوفرة في البيانات المرئية فاذكر ذلك صراحةً "
         "واقترح خطوات عملية للحصول عليها.\n\n"
+        f"(RID={rid})\n"
         f"البيانات المرئية الحالية:\n{context}"
     )
     user_msg = body.message or ""
 
     def stream():
-        # Use a light, fast model for chat streaming
         response = client.chat.completions.create(
             model="gpt-4o-mini",
             temperature=0.2,
