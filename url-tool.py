@@ -163,7 +163,7 @@ def call_openai_api_with_retry(examples, data: str, retries: int = 3, backoff: i
     for i in range(retries):
         try:
             response = client.chat.completions.create(
-                model="gpt-5-mini",
+                model="gpt-4o-mini",
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.7,
             )
@@ -291,7 +291,7 @@ def chat(body: ChatIn, authorization: Optional[str] = Header(None)):
     def stream():
         # Use a light, fast model for chat streaming
         response = client.chat.completions.create(
-            model="gpt-5-mini",
+            model="gpt-4o-mini",
             temperature=0.2,
             messages=[
                 {"role": "system", "content": sys_prompt},
