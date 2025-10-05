@@ -21,8 +21,9 @@ log = logging.getLogger("api")
 
 OPENAI_API_KEY  = os.getenv("OPENAI_API_KEY", "")
 JWT_SECRET      = os.getenv("JWT_SECRET", "")
-ALLOWED_ORIGINS = [o.strip() for o in os.getenv("ALLOWED_ORIGINS", "https://11ai.ellevensa.com").split(",") if o.strip()]
-WRITE_TO_DB     = os.getenv("API_WRITE_TO_DB", "0") == "1"
+#WRITE_TO_DB     = os.getenv("API_WRITE_TO_DB", "0") == "1"
+ALLOWED_ORIGINS = [o.strip() for o in os.getenv("ALLOWED_ORIGINS", "*").split(",") if o.strip()]
+
 
 if not OPENAI_API_KEY:
     raise RuntimeError("Missing OPENAI_API_KEY")
@@ -36,7 +37,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS if ALLOWED_ORIGINS != ["*"] else ["*"],
     allow_credentials=True,
-    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_methods=["*"],
     allow_headers=["*"],
 )
 
@@ -243,17 +244,17 @@ def profile_from_url(
         resp      = call_openai_api_with_retry(examples, extracted)
         generated_profile = resp.choices[0].message.content
 
-        if WRITE_TO_DB and DB_AVAILABLE:
-            try:
-                insert_generated_profile(
-                    user_id=user_id,
-                    organization_name=None,
-                    generated_profile=generated_profile,
-                    input_type="Using URL",
-                    request_id=rid
-                )
-            except Exception as e:
-                log.info(f"⚠️ insert_generated_profile failed (non-fatal): {e}")
+        #if WRITE_TO_DB and DB_AVAILABLE:
+        try:
+            insert_generated_profile(
+                user_id=user_id,
+                organization_name=None,
+                generated_profile=generated_profile,
+                input_type="Using URL",
+                request_id=rid
+            )
+        except Exception as e:
+            log.info(f"⚠️ insert_generated_profile failed (non-fatal): {e}")
 
         return {"profile": generated_profile, "request_id": rid}
     except HTTPException:
@@ -300,4 +301,5 @@ def chat(body: ChatIn,authorization: Optional[str] = Header(None),):
                 yield delta
 
     return StreamingResponse(stream(), media_type="text/plain")
+
 
