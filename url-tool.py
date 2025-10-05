@@ -282,39 +282,32 @@ def create_session(body: SessionIn, x_request_id: Optional[str] = Header(None)):
     return SessionOut(session_id=sid, token=token, request_id=rid)
 
 @app.post("/chat")
-def chat(
-    body: ChatIn,
-    authorization: Optional[str] = Header(None),
-    x_session_token: Optional[str] = Header(None),
-    x_request_id: Optional[str] = Header(None),
-):
-    _verify_jwt_any(authorization, x_session_token, body.token)
+def chat(body: ChatIn,authorization: Optional[str] = Header(None),):
+    _verify_jwt_any(authorization)
 
-    rid = x_request_id or body.request_id
     context = _values_to_context(body.visible_values)
     sys_prompt = (
-        "أنت مساعد موثوق يجيب بدقة بالاعتماد على البيانات المرئية الحالية للمستخدم. "
+        "أنت مساعد موثوق يجيب بالاعتماد على البيانات المرئية الحالية للمستخدم. "
         "إذا كانت المعلومة غير متوفرة في البيانات المرئية فاذكر ذلك صراحةً "
-        "واقترح خطوات عملية للحصول عليها.\n\n"
-        f"(RID={rid})\n"
-        f"البيانات المرئية الحالية:\n{context}"
+        "واقترح ما يمكن فعله للحصول عليها.\n\n"
+        f"البيانات المرئية الحالية: {context}"
     )
+    
     user_msg = body.message or ""
 
     def stream():
+        # Chat Completions streaming
         response = client.chat.completions.create(
             model="gpt-4o-mini",
+            temperature=0.2,
             messages=[
                 {"role": "system", "content": sys_prompt},
-                {"role": "user",   "content": user_msg},
+                {"role": "user",   "content": user_msg}
             ],
             stream=True
         )
         for chunk in response:
-            try:
-                delta = chunk.choices[0].delta.get("content") if chunk.choices else None
-            except Exception:
-                delta = None
+            delta = getattr(chunk.choices[0].delta, "content", None) if chunk.choices else None
             if delta:
                 yield delta
 
