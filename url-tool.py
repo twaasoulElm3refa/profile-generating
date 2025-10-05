@@ -1,49 +1,46 @@
-import os
-import json
-import time
-import uuid
-import logging
+import os, json, time, uuid, logging
+from typing import Optional, List
 from urllib.parse import urljoin, urlparse
 
 import jwt
 import requests
 from bs4 import BeautifulSoup
-from typing import Optional, List
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, Query, HTTPException, Header, Request
-from fastapi.responses import StreamingResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from openai import OpenAI
-import openai  # keep for installed exception classes
+import openai  # unified with your working file
 
-# -------------------- App init / config --------------------
+# -------------------- bootstrap --------------------
 load_dotenv()
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 log = logging.getLogger("api")
 
-app = FastAPI()
+OPENAI_API_KEY  = os.getenv("OPENAI_API_KEY", "")
+JWT_SECRET      = os.getenv("JWT_SECRET", "")
+ALLOWED_ORIGINS = [o.strip() for o in os.getenv("ALLOWED_ORIGINS", "https://11ai.ellevensa.com").split(",") if o.strip()]
+WRITE_TO_DB     = os.getenv("API_WRITE_TO_DB", "0") == "1"
 
-api_key = os.getenv("OPENAI_API_KEY")
-if not api_key:
-    raise RuntimeError("OPENAI_API_KEY is not set")
-client = OpenAI(api_key=api_key)
+if not OPENAI_API_KEY:
+    raise RuntimeError("Missing OPENAI_API_KEY")
+if not JWT_SECRET:
+    raise RuntimeError("Missing JWT_SECRET")
 
-JWT_SECRET = os.getenv("JWT_SECRET", "CHANGE_THIS_IN_PROD")
-WRITE_TO_DB = os.getenv("API_WRITE_TO_DB", "0") == "1"
-WP_ORIGIN = os.getenv("WP_ORIGIN", "https://11ai.ellevensa.com")
+client = openai.OpenAI(api_key=OPENAI_API_KEY)
+app = FastAPI(title="Profile Generator API")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[WP_ORIGIN],
+    allow_origins=ALLOWED_ORIGINS if ALLOWED_ORIGINS != ["*"] else ["*"],
     allow_credentials=True,
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
 )
 
-# ---- DB hooks (your code) ----------------------------------------------------
+# ---- optional DB hooks -------------------------------------------------------
 try:
     from database import fetch_profile_data, insert_generated_profile  # noqa: F401
     DB_AVAILABLE = True
@@ -51,11 +48,11 @@ except Exception as e:
     log.info(f"⚠️ database module missing/unavailable: {e}")
     DB_AVAILABLE = False
 
-# -------------------- Models --------------------
+# -------------------- models --------------------
 class SessionIn(BaseModel):
     user_id: int
     wp_nonce: Optional[str] = None
-    request_id: Optional[str] = None  # WP row id
+    request_id: Optional[str] = None
 
 class SessionOut(BaseModel):
     session_id: str
@@ -67,7 +64,7 @@ class VisibleValue(BaseModel):
     organization_name: Optional[str] = None
     about_press: Optional[str] = None
     press_date: Optional[str] = None
-    article: Optional[str] = None  # WP edited content
+    article: Optional[str] = None  # for WP edited text if provided
 
 class ChatIn(BaseModel):
     session_id: str
@@ -75,9 +72,9 @@ class ChatIn(BaseModel):
     message: str
     visible_values: List[VisibleValue] = Field(default_factory=list)
     request_id: Optional[str] = None
-    token: Optional[str] = None  # fallback if auth header is stripped
+    token: Optional[str] = None  # fallback if auth header stripped
 
-# -------------------- Helpers --------------------
+# -------------------- jwt helpers --------------------
 def _make_jwt(session_id: str, user_id: int) -> str:
     payload = {
         "sid": session_id,
@@ -88,16 +85,10 @@ def _make_jwt(session_id: str, user_id: int) -> str:
     return jwt.encode(payload, JWT_SECRET, algorithm="HS256")
 
 def _resolve_token(auth: Optional[str], x_token: Optional[str], body_token: Optional[str]) -> str:
-    """
-    Accept token from:
-      - Authorization: Bearer <token>
-      - X-Session-Token: <token>
-      - body.token
-    """
     if auth and auth.startswith("Bearer "):
-        tok = auth.split(" ", 1)[1].strip()
-        if tok:
-            return tok
+        t = auth.split(" ", 1)[1].strip()
+        if t:
+            return t
     if x_token and x_token.strip():
         return x_token.strip()
     if body_token and str(body_token).strip():
@@ -107,15 +98,16 @@ def _resolve_token(auth: Optional[str], x_token: Optional[str], body_token: Opti
 def _verify_jwt_any(auth: Optional[str], x_token: Optional[str], body_token: Optional[str]):
     tok = _resolve_token(auth, x_token, body_token)
     try:
-        # Allow small clock skew
-        jwt.decode(tok, JWT_SECRET, algorithms=["HS256"], leeway=30)
+        # allow small skew in case clocks differ slightly
+        jwt.decode(tok, JWT_SECRET, algorithms=["HS256"], leeway=60)
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="Expired token")
     except jwt.InvalidTokenError:
         raise HTTPException(status_code=401, detail="Invalid token")
 
+# -------------------- misc helpers --------------------
 def _clip(txt: Optional[str], max_chars: int) -> str:
-    if txt is None:
+    if not txt:
         return ""
     txt = txt.strip()
     return txt if len(txt) <= max_chars else txt[:max_chars] + "…"
@@ -131,7 +123,7 @@ def _values_to_context(values: List[VisibleValue]) -> str:
     if v.article:           parts.append(f"المحتوى الحالي (مختصر):\n{_clip(v.article, 6000)}")
     return " | ".join(parts) if parts else "لا توجد تفاصيل كافية."
 
-# -------------------- Middleware (Request-ID + logging) --------------------
+# -------------------- middleware --------------------
 @app.middleware("http")
 async def add_request_id_and_log(request: Request, call_next):
     rid = request.headers.get("X-Request-ID") or request.query_params.get("request_id")
@@ -144,18 +136,68 @@ async def add_request_id_and_log(request: Request, call_next):
     log.info(f"[{rid or '-'}] {request.method} {path_q} -> {response.status_code} in {dur_ms}ms")
     return response
 
-# -------------------- Simple root & health --------------------
+# -------------------- root / health --------------------
 @app.get("/")
 def root():
-    return {"ok": True, "service": "profile-generator", "origin": WP_ORIGIN}
+    return {"ok": True, "service": "profile-generator"}
 
 @app.get("/health")
 def health():
     return {"ok": True}
 
+# -------------------- extraction --------------------
+SKIP_SUBSTRINGS = (
+    "/category/", "/tag/", "/feed", "/wp-json", "/author/",
+    ".jpg", ".jpeg", ".png", ".gif", ".svg", ".pdf", ".zip", ".mp4", ".mp3",
+)
+
+def _same_host(a: str, b: str) -> bool:
+    return urlparse(a).netloc == urlparse(b).netloc
+
+def _should_visit(base: str, url: str) -> bool:
+    if not _same_host(base, url):
+        return False
+    u = url.lower()
+    return not any(s in u for s in SKIP_SUBSTRINGS)
+
+def extract_info_from_url_and_subpages(base_url: str, max_pages: int = 7) -> str:
+    visited, to_visit, chunks = set(), [base_url], []
+    while to_visit and len(visited) < max_pages:
+        url = to_visit.pop(0)
+        if url in visited:
+            continue
+        try:
+            r = requests.get(url, timeout=12)
+            r.raise_for_status()
+            visited.add(url)
+            soup = BeautifulSoup(r.text, "html.parser")
+
+            page = []
+            title = soup.title.string.strip() if soup.title and soup.title.string else ""
+            if title: page.append(f"Title: {title}")
+            desc = soup.find("meta", attrs={"name": "description"})
+            if desc and desc.get("content"): page.append(f"Description: {desc['content'].strip()}")
+
+            cnt = 0
+            for p in soup.find_all("p"):
+                t = p.get_text(strip=True)
+                if len(t) > 50:
+                    page.append(t); cnt += 1
+                if cnt >= 2: break
+            if page: chunks.append("\n".join(page))
+
+            for a in soup.find_all("a", href=True):
+                j = urljoin(base_url, a["href"])
+                if j not in visited and j not in to_visit and _should_visit(base_url, j):
+                    to_visit.append(j)
+        except Exception as e:
+            log.info(f"❌ Error visiting {url}: {e}")
+            continue
+    return "\n\n---\n\n".join(chunks)
+
 # -------------------- OpenAI call --------------------
 def call_openai_api_with_retry(examples, data: str, retries: int = 3, backoff: int = 5):
-    examples_text = "\n\n".join(examples[:2])  # keep short
+    examples_text = "\n\n".join(examples[:2])
     prompt = f"""أنت خبير محترف في إعداد الملفات التعريفية للشركات (Company Profiles)...
 أمثلة:
 {examples_text}
@@ -167,87 +209,23 @@ def call_openai_api_with_retry(examples, data: str, retries: int = 3, backoff: i
 """
     for i in range(retries):
         try:
-            response = client.chat.completions.create(
+            return client.chat.completions.create(
                 model="gpt-4o-mini",
                 messages=[{"role": "user", "content": prompt}],
-                # temperature omitted → avoids “only default (1) supported” surprises
             )
-            return response
         except getattr(openai, "RateLimitError", Exception):
             if i < retries - 1:
-                wait_time = backoff * (i + 1)
-                log.info(f"Rate limit/transient error. Retrying in {wait_time}s...")
-                time.sleep(wait_time)
+                wait = backoff * (i + 1)
+                log.info(f"Rate limit/transient error → retry in {wait}s")
+                time.sleep(wait)
             else:
                 raise HTTPException(status_code=429, detail="Rate limit exceeded, please try again later.")
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
 
-# -------------------- Extraction --------------------
-SKIP_SUBSTRINGS = (
-    "/category/", "/tag/", "/feed", "/wp-json", "/author/",
-    ".jpg", ".jpeg", ".png", ".gif", ".svg", ".pdf", ".zip", ".mp4", ".mp3",
-)
-
-def should_visit(base: str, url: str) -> bool:
-    if any(s in url.lower() for s in SKIP_SUBSTRINGS):
-        return False
-    # stay on same host
-    return urlparse(base).netloc == urlparse(url).netloc
-
-def extract_info_from_url_and_subpages(base_url, max_pages=7):
-    visited = set()
-    to_visit = [base_url]
-    all_texts = []
-
-    while to_visit and len(visited) < max_pages:
-        url = to_visit.pop(0)
-        if url in visited:
-            continue
-        try:
-            resp = requests.get(url, timeout=12)
-            resp.raise_for_status()
-            html = resp.text
-            soup = BeautifulSoup(html, "html.parser")
-            visited.add(url)
-
-            page_text = []
-            title = soup.title.string.strip() if soup.title and soup.title.string else ""
-            if title:
-                page_text.append(f"Title: {title}")
-
-            desc_tag = soup.find("meta", attrs={"name": "description"})
-            if desc_tag and desc_tag.get("content"):
-                page_text.append(f"Description: {desc_tag['content'].strip()}")
-
-            # a couple of meaningful paragraphs
-            count = 0
-            for p in soup.find_all("p"):
-                text = p.get_text(strip=True)
-                if len(text) > 50:
-                    page_text.append(text)
-                    count += 1
-                if count >= 2:
-                    break
-
-            if page_text:
-                all_texts.append("\n".join(page_text))
-
-            for link in soup.find_all("a", href=True):
-                joined = urljoin(base_url, link["href"])
-                if joined not in visited and joined not in to_visit and should_visit(base_url, joined):
-                    to_visit.append(joined)
-
-        except Exception as e:
-            log.info(f"❌ Error visiting {url}: {e}")
-            continue
-
-    return "\n\n---\n\n".join(all_texts)
-
-# -------------------- Examples loader (safe) --------------------
-def load_examples_from_json(json_path="example_profiles.json"):
+def load_examples_from_json(path="example_profiles.json"):
     try:
-        with open(json_path, "r", encoding="utf-8") as f:
+        with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
             if isinstance(data, list):
                 return [x if isinstance(x, str) else json.dumps(x, ensure_ascii=False) for x in data]
@@ -259,38 +237,35 @@ def load_examples_from_json(json_path="example_profiles.json"):
             "شركة بيتا — من نحن، رؤيتنا، رسالتنا، حلول متقدمة، أسلوب العمل، بيانات الاتصال."
         ]
 
-# -------------------- Generator endpoint --------------------
+# -------------------- generator endpoint --------------------
 @app.get("/profile-url/{user_id}/")
 def profile_from_url(
     user_id: int,
     url: str = Query(..., description="Company website URL"),
-    request_id: Optional[str] = Query(None, description="WP request id (wpl3_profile_generating_tool.id)"),
+    request_id: Optional[str] = Query(None),
     x_request_id: Optional[str] = Header(None),
 ):
     if not url or not url.startswith(("http://", "https://")):
         raise HTTPException(status_code=400, detail="Invalid URL")
 
     rid = x_request_id or request_id
-
     try:
-        extracted_data  = extract_info_from_url_and_subpages(url)
-        loaded_examples = load_examples_from_json()
+        extracted = extract_info_from_url_and_subpages(url)
+        examples  = load_examples_from_json()
+        resp      = call_openai_api_with_retry(examples, extracted)
+        generated_profile = resp.choices[0].message.content
 
-        response = call_openai_api_with_retry(loaded_examples, extracted_data)
-        generated_profile = response.choices[0].message.content
-
-        # Optional API-side DB write (defaults OFF)
         if WRITE_TO_DB and DB_AVAILABLE:
             try:
                 insert_generated_profile(
                     user_id=user_id,
                     organization_name=None,
                     generated_profile=generated_profile,
-                    input_type='Using URL',
+                    input_type="Using URL",
                     request_id=rid
                 )
-            except Exception as db_e:
-                log.info(f"⚠️ insert_generated_profile failed (non-fatal): {db_e}")
+            except Exception as e:
+                log.info(f"⚠️ insert_generated_profile failed (non-fatal): {e}")
 
         return {"profile": generated_profile, "request_id": rid}
     except HTTPException:
@@ -298,7 +273,7 @@ def profile_from_url(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"server error: {e}")
 
-# -------------------- Session & Chat --------------------
+# -------------------- session & chat --------------------
 @app.post("/session", response_model=SessionOut)
 def create_session(body: SessionIn, x_request_id: Optional[str] = Header(None)):
     rid = x_request_id or body.request_id
@@ -311,9 +286,8 @@ def chat(
     body: ChatIn,
     authorization: Optional[str] = Header(None),
     x_session_token: Optional[str] = Header(None),
-    x_request_id: Optional[str] = Header(None)
+    x_request_id: Optional[str] = Header(None),
 ):
-    # accept token from multiple places
     _verify_jwt_any(authorization, x_session_token, body.token)
 
     rid = x_request_id or body.request_id
@@ -332,9 +306,9 @@ def chat(
             model="gpt-4o-mini",
             messages=[
                 {"role": "system", "content": sys_prompt},
-                {"role": "user",   "content": user_msg}
+                {"role": "user",   "content": user_msg},
             ],
-            stream=True  # temperature omitted
+            stream=True
         )
         for chunk in response:
             try:
