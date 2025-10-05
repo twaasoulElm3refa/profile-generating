@@ -84,24 +84,12 @@ def _make_jwt(session_id: str, user_id: int) -> str:
     }
     return jwt.encode(payload, JWT_SECRET, algorithm="HS256")
 
-def _resolve_token(auth: Optional[str], x_token: Optional[str], body_token: Optional[str]) -> str:
-    if auth and auth.startswith("Bearer "):
-        t = auth.split(" ", 1)[1].strip()
-        if t:
-            return t
-    if x_token and x_token.strip():
-        return x_token.strip()
-    if body_token and str(body_token).strip():
-        return str(body_token).strip()
-    raise HTTPException(status_code=401, detail="Missing token")
-
-def _verify_jwt_any(auth: Optional[str], x_token: Optional[str], body_token: Optional[str]):
-    tok = _resolve_token(auth, x_token, body_token)
+def _verify_jwt(bearer: Optional[str]):
+    if not bearer or not bearer.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing Authorization header")
+    token = bearer.split(" ", 1)[1]
     try:
-        # allow small skew in case clocks differ slightly
-        jwt.decode(tok, JWT_SECRET, algorithms=["HS256"], leeway=60)
-    except jwt.ExpiredSignatureError:
-        raise HTTPException(status_code=401, detail="Expired token")
+        jwt.decode(token, JWT_SECRET, algorithms=["HS256"])
     except jwt.InvalidTokenError:
         raise HTTPException(status_code=401, detail="Invalid token")
 
@@ -283,7 +271,7 @@ def create_session(body: SessionIn, x_request_id: Optional[str] = Header(None)):
 
 @app.post("/chat")
 def chat(body: ChatIn,authorization: Optional[str] = Header(None),):
-    _verify_jwt_any(authorization)
+    _verify_jwt(authorization)
 
     context = _values_to_context(body.visible_values)
     sys_prompt = (
@@ -312,3 +300,4 @@ def chat(body: ChatIn,authorization: Optional[str] = Header(None),):
                 yield delta
 
     return StreamingResponse(stream(), media_type="text/plain")
+
