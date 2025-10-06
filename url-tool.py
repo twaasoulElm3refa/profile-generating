@@ -186,7 +186,7 @@ def extract_info_from_url_and_subpages(base_url: str, max_pages: int = 7) -> str
         if url in visited:
             continue
         try:
-            r = requests.get(url, timeout=12)
+            r = requests.get(url, timeout=(8,12))
             r.raise_for_status()
             visited.add(url)
             soup = BeautifulSoup(r.text, "html.parser")
@@ -262,6 +262,7 @@ def profile_from_url(
     user_id: int,
     url: str = Query(..., description="Company website URL"),
     request_id: Optional[int] = Query(None),
+    max_pages: int = Query(4, ge=1, le=10),      
     x_request_id: Optional[str] = Header(None),
 ):
     if not url or not url.startswith(("http://", "https://")):
@@ -341,3 +342,4 @@ def chat(
                 yield delta
 
     return StreamingResponse(stream(), media_type="text/plain")
+
