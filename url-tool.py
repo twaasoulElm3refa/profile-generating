@@ -62,11 +62,12 @@ class SessionOut(BaseModel):
 
 # EXACTLY what the WP plugin sends now (+ future-safe optional fields)
 class VisibleValue(BaseModel):
-    id: Optional[int] = None
-    article: Optional[str] = None
-    request_id: Optional[int] = None   # optional if you add it in WP later
-    website: Optional[str] = None      # optional if you add it in WP later
-
+    user_id: Optional[int] = None
+    generated_profile: Optional[str] = None
+    request_id: Optional[str] = None   # optional if you add it in WP later
+    url:str = Query(..., description="Company website URL") = None      # optional if you add it in WP later
+    x_request_id: Optional[str] = Header(None),
+    
 class ChatIn(BaseModel):
     session_id: str
     user_id: int
@@ -129,11 +130,11 @@ def _values_to_context(values: List[VisibleValue]) -> str:
     lines = []
     if v.request_id:
         lines.append(f"معرّف الطلب (RID): {v.request_id}")
-    if v.website:
-        lines.append(f"الموقع: {v.website}")
-    if v.article:
+    if v.url:
+        lines.append(f"الموقع: {v.url}")
+    if v.generated_profile:
         lines.append("المحتوى الحالي (مختصر):")
-        lines.append(_clip(v.article, 6000))
+        lines.append(_clip(v.generated_profile, 6000))
     if not lines:
         lines.append("لا توجد تفاصيل كافية.")
     return "\n".join(lines)
@@ -337,3 +338,4 @@ def chat(
                 yield delta
 
     return StreamingResponse(stream(), media_type="text/plain")
+
