@@ -13,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-import openai  # compatible with your "working code" import style
+import openai  # same style as your working code
 
 # ───────────────────────── Bootstrap ─────────────────────────
 load_dotenv()
@@ -41,7 +41,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Optional API-side DB hooks (kept safe behind WRITE_TO_DB)
+# Optional API-side DB hooks (kept behind WRITE_TO_DB)
 try:
     from database import insert_generated_profile  # noqa: F401
     DB_AVAILABLE = True
@@ -53,27 +53,27 @@ except Exception as e:
 class SessionIn(BaseModel):
     user_id: int
     wp_nonce: Optional[str] = None
-    request_id: Optional[str] = None  # WP request row id
+    request_id: Optional[int] = None  # WP request row id
 
 class SessionOut(BaseModel):
     session_id: str
     token: str
-    request_id: Optional[str] = None
+    request_id: Optional[int] = None
 
-# EXACTLY what the WP plugin sends now (+ future-safe optional fields)
+# What the WP plugin sends today (id + article). Extras are optional/future-safe.
 class VisibleValue(BaseModel):
-    user_id: Optional[int] = None
-    generated_profile: Optional[str] = None
-    request_id: Optional[str] = None   # optional if you add it in WP later
-    url:str = Query(..., description="Company website URL") = None      # optional if you add it in WP later
-    x_request_id: Optional[str] = Header(None),
-    
+    id: Optional[int] = None
+    article: Optional[str] = None               # current plugin field
+    generated_profile: Optional[str] = None     # in case you ever rename
+    request_id: Optional[int] = None            # if you start sending it from WP
+    website: Optional[str] = None               # if you start sending it from WP
+
 class ChatIn(BaseModel):
     session_id: str
     user_id: int
     message: str
     visible_values: List[VisibleValue] = Field(default_factory=list)
-    request_id: Optional[str] = None
+    request_id: Optional[int] = None
     token: Optional[str] = None  # fallback if Authorization header is stripped
 
 # ───────────────────────── JWT helpers ─────────────────────────
@@ -95,7 +95,8 @@ def _resolve_token(auth: Optional[str], x_token: Optional[str], body_token: Opti
     """
     if auth and auth.startswith("Bearer "):
         t = auth.split(" ", 1)[1].strip()
-        if t: return t
+        if t:
+            return t
     if x_token and x_token.strip():
         return x_token.strip()
     if body_token and str(body_token).strip():
@@ -120,9 +121,9 @@ def _clip(txt: Optional[str], max_chars: int) -> str:
 
 def _values_to_context(values: List[VisibleValue]) -> str:
     """
-    Build the assistant context from WP's "visible_values".
-    Today WP only sends {id, article}. If later you include request_id/website,
-    this function will show them too.
+    Build assistant context from WP "visible_values".
+    Today WP sends {id, article}. If later you include request_id/website,
+    they'll appear automatically.
     """
     if not values:
         return "لا توجد بيانات مرئية حالياً لهذا المستخدم."
@@ -130,11 +131,13 @@ def _values_to_context(values: List[VisibleValue]) -> str:
     lines = []
     if v.request_id:
         lines.append(f"معرّف الطلب (RID): {v.request_id}")
-    if v.url:
-        lines.append(f"الموقع: {v.url}")
-    if v.generated_profile:
+    if v.website:
+        lines.append(f"الموقع: {v.website}")
+    # prefer article, else generated_profile
+    text = v.article or v.generated_profile
+    if text:
         lines.append("المحتوى الحالي (مختصر):")
-        lines.append(_clip(v.generated_profile, 6000))
+        lines.append(_clip(text, 6000))
     if not lines:
         lines.append("لا توجد تفاصيل كافية.")
     return "\n".join(lines)
@@ -258,7 +261,7 @@ def load_examples_from_json(path="example_profiles.json"):
 def profile_from_url(
     user_id: int,
     url: str = Query(..., description="Company website URL"),
-    request_id: Optional[str] = Query(None),
+    request_id: Optional[int] = Query(None),
     x_request_id: Optional[str] = Header(None),
 ):
     if not url or not url.startswith(("http://", "https://")):
@@ -338,4 +341,3 @@ def chat(
                 yield delta
 
     return StreamingResponse(stream(), media_type="text/plain")
-
