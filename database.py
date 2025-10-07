@@ -61,7 +61,7 @@ def fetch_profile_data(user_id: str ):
 
 
 
-def insert_generated_profile(user_id, organization_name, generated_profile, input_type='Using FORM',request_id=None):
+def insert_generated_profile(user_id, organization_name, generated_profile, input_type='Using URL',request_id=None):
     connection = get_db_connection()
     if connection is None:
         return False
@@ -83,3 +83,4 @@ def insert_generated_profile(user_id, organization_name, generated_profile, inpu
         if connection.is_connected():
             cursor.close()
             connection.close()
+
