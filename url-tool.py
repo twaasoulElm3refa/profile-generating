@@ -327,26 +327,35 @@ def chat(
     user_msg = body.message or ""
 
     def stream():
-    # Streaming text/plain so your JS uses the streaming path
-    response = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[
-            {"role": "system", "content": sys_prompt},
-            {"role": "user",   "content": user_msg}
-        ],
-        stream=True
-    )
-    for chunk in response:
+        sent_any = False
         try:
-            # choices always present on a chunk; delta may carry role or content
-            choice = chunk.choices[0]
-            delta  = getattr(choice, "delta", None)
-            content = getattr(delta, "content", None)
-            if content:
-                # yield text (StreamingResponse will encode to bytes)
-                yield content
+            # stream chat-completions; new OpenAI client yields chunks
+            response = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": sys_prompt},
+                    {"role": "user",   "content": user_msg}
+                ],
+                stream=True
+            )
+            for chunk in response:
+                try:
+                    choice = chunk.choices[0]
+                    delta  = getattr(choice, "delta", None)
+                    # works for SDK objects and dicts
+                    content = (delta.get("content") if isinstance(delta, dict)
+                               else getattr(delta, "content", None))
+                    if content:
+                        sent_any = True
+                        yield content
+                except Exception as e:
+                    log.info(f"stream chunk error: {e}")
+                    # continue reading next chunk
         except Exception as e:
-            log.info(f"stream chunk error: {e}")
-            # optionally continue or break
+            log.info(f"stream start error: {e}")
 
-    return StreamingResponse(stream(), media_type="text/plain")
+        # Fallback: if provider gave zero text, don't return an empty body
+        if not sent_any:
+            yield "تعذّر الحصول على رد حالياً. حاول مرة أخرى بعد قليل."
+
+    return StreamingResponse(stream(), media_type="text/plain; charset=utf-8")
