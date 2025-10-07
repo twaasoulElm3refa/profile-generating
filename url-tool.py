@@ -108,6 +108,7 @@ def _verify_jwt_any(auth: Optional[str], x_token: Optional[str], body_token: Opt
     try:
         jwt.decode(tok, JWT_SECRET, algorithms=["HS256"], leeway=30)  # small clock skew
     except jwt.ExpiredSignatureError:
+        log.info(f"Auth failed: {type(e).__name__} – {getattr(e, 'args', [''])[0]}")
         raise HTTPException(status_code=401, detail="Expired token")
     except jwt.InvalidTokenError:
         raise HTTPException(status_code=401, detail="Invalid token")
@@ -342,4 +343,5 @@ def chat(
                 yield delta
 
     return StreamingResponse(stream(), media_type="text/plain")
+
 
