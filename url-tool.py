@@ -35,10 +35,11 @@ app = FastAPI(title="Profile Generator API")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=ALLOWED_ORIGINS if ALLOWED_ORIGINS != ["*"] else ["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=["*"],              # or a list of domains
+    allow_credentials=False,          # header-based auth ⇒ no credentials
+    allow_methods=["POST","GET","OPTIONS"],
+    allow_headers=["Authorization","Content-Type","X-Session-Token","X-Request-ID"],
+    expose_headers=["X-Request-ID"],
 )
 
 # Optional API-side DB hooks (kept behind WRITE_TO_DB)
@@ -106,11 +107,12 @@ def _resolve_token(auth: Optional[str], x_token: Optional[str], body_token: Opti
 def _verify_jwt_any(auth: Optional[str], x_token: Optional[str], body_token: Optional[str]):
     tok = _resolve_token(auth, x_token, body_token)
     try:
-        jwt.decode(tok, JWT_SECRET, algorithms=["HS256"], leeway=30)  # small clock skew
-    except jwt.ExpiredSignatureError:
-        log.info(f"Auth failed: {type(e).__name__} – {getattr(e, 'args', [''])[0]}")
+        jwt.decode(tok, JWT_SECRET, algorithms=["HS256"], leeway=30)
+    except jwt.ExpiredSignatureError as e:
+        log.info(f"Auth failed: {type(e).__name__} – {e}")
         raise HTTPException(status_code=401, detail="Expired token")
-    except jwt.InvalidTokenError:
+    except jwt.InvalidTokenError as e:
+        log.info(f"Auth failed: {type(e).__name__} – {e}")
         raise HTTPException(status_code=401, detail="Invalid token")
 
 # ───────────────────────── Context helpers ─────────────────────────
@@ -343,5 +345,6 @@ def chat(
                 yield delta
 
     return StreamingResponse(stream(), media_type="text/plain")
+
 
 
