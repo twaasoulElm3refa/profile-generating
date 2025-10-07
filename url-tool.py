@@ -327,24 +327,26 @@ def chat(
     user_msg = body.message or ""
 
     def stream():
-        # Streaming text/plain so your JS uses the streaming path
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": sys_prompt},
-                {"role": "user",   "content": user_msg}
-            ],
-            stream=True
-        )
-        for chunk in response:
-            try:
-                delta = chunk.choices[0].delta.get("content") if chunk.choices else None
-            except Exception:
-                delta = None
-            if delta:
-                yield delta
+    # Streaming text/plain so your JS uses the streaming path
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[
+            {"role": "system", "content": sys_prompt},
+            {"role": "user",   "content": user_msg}
+        ],
+        stream=True
+    )
+    for chunk in response:
+        try:
+            # choices always present on a chunk; delta may carry role or content
+            choice = chunk.choices[0]
+            delta  = getattr(choice, "delta", None)
+            content = getattr(delta, "content", None)
+            if content:
+                # yield text (StreamingResponse will encode to bytes)
+                yield content
+        except Exception as e:
+            log.info(f"stream chunk error: {e}")
+            # optionally continue or break
 
     return StreamingResponse(stream(), media_type="text/plain")
-
-
-
