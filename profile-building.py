@@ -299,3 +299,4 @@ def chat(
     if rid:
         headers["X-Request-ID"] = str(rid)
     return StreamingResponse(stream(), media_type="text/plain", headers=headers)
+
