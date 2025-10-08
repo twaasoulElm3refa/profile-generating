@@ -11,6 +11,9 @@ from fastapi.responses import JSONResponse, StreamingResponse
 import jwt
 from openai import OpenAI
 
+# Your DB helpers (as in your code)
+from database import fetch_profile_data, insert_generated_profile
+
 # ─────────────────── Bootstrap ───────────────────
 load_dotenv()
 logging.basicConfig(level=logging.INFO, format="%(message)s")
@@ -26,9 +29,6 @@ if not OPENAI_API_KEY:
     raise RuntimeError("Missing OPENAI_API_KEY")
 if not JWT_SECRET:
     raise RuntimeError("Missing JWT_SECRET")
-
-# Your DB helpers (as in your code)
-from database import fetch_profile_data, insert_generated_profile
 
 client = OpenAI(api_key=OPENAI_API_KEY)
 app = FastAPI(title="Profile Generating Tool")
@@ -84,7 +84,7 @@ def generate_profile_text(latest_row: dict, examples: List[str]) -> str:
 
     examples_text = "\n\n".join(examples[:2])  # نرسل أول مثالين فقط لتقليل الطول
     prompt=f'''أنت خبير متخصص في كتابة الملفات التعريفية للشركات (Company Profiles)، وتعمل كمستشار استراتيجي في تطوير الهوية المؤسسية والعرض الاحترافي للخدمات.
-ستتلقى مجموعة من الملفات تتضمن محتوى خام وتعريفي من عدة شركات{examples_text}، دورك هو أن تحلل هذه الملفات بدقة، وتستخلص منها الأسلوب الاحترافي الأمثل لبناء ملف تعريفي متميز ومتكامل لشركة معلوماتها فى {data}مع ذكر الرؤيه والرساله فى فقرات منفصله .
+ستتلقى مجموعة من الملفات تتضمن محتوى خام وتعريفي من عدة شركات{examples_text}، دورك هو أن تحلل هذه الملفات بدقة، وتستخلص منها الأسلوب الاحترافي الأمثل لبناء ملف تعريفي متميز ومتكامل لشركة معلوماتها فى {data_json}مع ذكر الرؤيه والرساله فى فقرات منفصله .
 المطلوب:
     كتابة ملف تعريفي احترافي للشركة بأسلوب عصري وجذاب، يُراعي اللغة المؤسسية، ويُبرز الهوية والمكانة التنافسية.
     لا تعتمد على هيكل جاهز، بل ابتكر ترتيبًا منطقيًا وتدريجيًا للمحتوى يُناسب الشركة ومجالها.
@@ -170,7 +170,7 @@ def profile_generating_tool(
         data = rows[-1]
 
         loaded_examples = load_examples_from_json()
-        generated_profile = generate_profile_model(data, loaded_examples)
+        generated_profile = generate_profile_text(data, loaded_examples)
         save_data= insert_generated_profile(user_id,data['organization_name'],generated_profile)
 
         # Avoid duplicate writes: plugin is already saving the result row
@@ -225,7 +225,7 @@ class ChatIn(BaseModel):
     token: Optional[str] = None  # fallback if proxy strips Authorization header
 
 # ─────────────────── Chat endpoints (under the same base path) ───────────────────
-@app.post("/profile-generating-tool/session", response_model=SessionOut)
+@app.post("/session", response_model=SessionOut)
 def create_session(body: SessionIn, x_request_id: Optional[str] = Header(None)):
     rid = x_request_id or body.request_id
     sid = str(uuid.uuid4())
@@ -249,7 +249,7 @@ def _values_to_context(values: List[VisibleValue]) -> str:
         lines.append("لا توجد تفاصيل كافية.")
     return "\n".join(lines)
 
-@app.post("/profile-generating-tool/chat")
+@app.post("/chat")
 def chat(
     body: ChatIn,
     authorization: Optional[str] = Header(None),
@@ -299,4 +299,5 @@ def chat(
     if rid:
         headers["X-Request-ID"] = str(rid)
     return StreamingResponse(stream(), media_type="text/plain", headers=headers)
+
 
