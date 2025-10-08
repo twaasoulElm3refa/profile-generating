@@ -70,9 +70,9 @@ def _clip(txt: Optional[str], n: int) -> str:
     return txt if len(txt) <= n else txt[:n] + "…"
 
 # ─────────────────── OpenAI prompts ───────────────────
-def generate_profile_text(latest_row: dict, examples: List[str]) -> str:
+def generate_profile_text(data: dict, examples: List[str]) -> str:
     """
-    latest_row is a dict from fetch_profile_data(user_id): e.g.
+    data is a dict from fetch_profile_data(user_id): e.g.
     {
       'organization_name': ..., 'vision': ..., 'message': ..., 'about_organization': ...,
       'services': ..., 'phone': ..., 'website': ..., 'email': ..., 'location': ..., 'more_information': ...
@@ -80,7 +80,7 @@ def generate_profile_text(latest_row: dict, examples: List[str]) -> str:
     """
     examples_text = "\n\n".join(examples[:2])
     # Serialize the latest row as compact JSON for the prompt
-    data_json = json.dumps(latest_row, ensure_ascii=False)
+    data_json = json.dumps(data, ensure_ascii=False , default=str)
 
     examples_text = "\n\n".join(examples[:2])  # نرسل أول مثالين فقط لتقليل الطول
     prompt=f'''أنت خبير متخصص في كتابة الملفات التعريفية للشركات (Company Profiles)، وتعمل كمستشار استراتيجي في تطوير الهوية المؤسسية والعرض الاحترافي للخدمات.
@@ -299,5 +299,3 @@ def chat(
     if rid:
         headers["X-Request-ID"] = str(rid)
     return StreamingResponse(stream(), media_type="text/plain", headers=headers)
-
-
