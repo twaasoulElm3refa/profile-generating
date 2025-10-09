@@ -12,7 +12,7 @@ import jwt
 from openai import OpenAI
 
 # Your DB helpers (as in your code)
-from database import fetch_profile_data, insert_generated_profile
+from database import fetch_profile_data   #, insert_generated_profil
 
 # ─────────────────── Bootstrap ───────────────────
 load_dotenv()
@@ -171,10 +171,10 @@ def profile_generating_tool(
 
         loaded_examples = load_examples_from_json()
         generated_profile = generate_profile_text(data, loaded_examples)
-        save_data= insert_generated_profile(user_id,data['organization_name'],generated_profile)
+        #save_data= insert_generated_profile(user_id,data['organization_name'],generated_profile)
 
         # Avoid duplicate writes: plugin is already saving the result row
-        if API_WRITE_TO_DB:
+        '''if API_WRITE_TO_DB:
             try:
                 insert_generated_profile(
                     user_id,
@@ -182,7 +182,7 @@ def profile_generating_tool(
                     generated_profile
                 )
             except Exception as e:
-                log.info(f"⚠ insert_generated_profile failed (non-fatal): {e}")
+                log.info(f"⚠ insert_generated_profile failed (non-fatal): {e}")'''
 
         resp = JSONResponse(content={"generated_profile": generated_profile})
         if rid:
@@ -299,3 +299,4 @@ def chat(
     if rid:
         headers["X-Request-ID"] = str(rid)
     return StreamingResponse(stream(), media_type="text/plain", headers=headers)
+
