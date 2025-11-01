@@ -1,25 +1,29 @@
-import os, uuid, time, jwt
-from typing import Optional, List, Dict, Any
-
-from fastapi import FastAPI, Header, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
+# api.py
+import os, json, time, uuid, logging
+from typing import Optional, List
+from urllib.parse import urlparse
 
 from dotenv import load_dotenv
+from fastapi import FastAPI, Header, HTTPException, Request, Query
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse, StreamingResponse
+
+import jwt
 from openai import OpenAI
 
-from database import get_db_connection, fetch_press_releases, update_press_release
+# Your DB helpers (as in your code)
+from database import fetch_profile_data   #, insert_generated_profil
 
-# -------------------------
-# App & environment
-# -------------------------
+# ─────────────────── Bootstrap ───────────────────
 load_dotenv()
+logging.basicConfig(level=logging.INFO, format="%(message)s")
+log = logging.getLogger("pg-api")
 
-OPENAI_API_KEY  = os.getenv("OPENAI_API_KEY")
-JWT_SECRET      = os.getenv("JWT_SECRET")
-ALLOWED_ORIGINS = [o.strip() for o in os.getenv("ALLOWED_ORIGINS", "*").split(",") if o.strip()] or ["*"]
-PR_FORM_TABLE   = os.getenv("PR_FORM_TABLE", "press_release_Form")  # must match exact table name
+OPENAI_API_KEY   = os.getenv("OPENAI_API_KEY", "")
+JWT_SECRET       = os.getenv("JWT_SECRET", "") or os.getenv("SECRET_KEY", "")
+ALLOWED_ORIGINS  = [o.strip() for o in os.getenv("ALLOWED_ORIGINS", "*").split(",") if o.strip()]
+TOKEN_TTL_SEC    = int(os.getenv("TOKEN_TTL_SEC", "1800"))  # 30 min
+API_WRITE_TO_DB  = os.getenv("API_WRITE_TO_DB", "0") == "1"  # default OFF to avoid duplicate rows
 
 if not OPENAI_API_KEY:
     raise RuntimeError("Missing OPENAI_API_KEY")
@@ -27,310 +31,271 @@ if not JWT_SECRET:
     raise RuntimeError("Missing JWT_SECRET")
 
 client = OpenAI(api_key=OPENAI_API_KEY)
-app = FastAPI(title="Press API")
+app = FastAPI(title="Profile Generating Tool")
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS if ALLOWED_ORIGINS != ["*"] else ["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_credentials=False,  # header auth, not cookies
+    allow_methods=["GET","POST","OPTIONS"],
+    allow_headers=["Authorization","Content-Type","X-Session-Token","X-Request-ID"],
+    expose_headers=["X-Request-ID"],
 )
 
-# -------------------------
-# DB helper (fetch specific row by rid)
-# -------------------------
-def _fetch_release_by_id(rid: int) -> Optional[Dict[str, Any]]:
-    conn = get_db_connection()
-    cur = conn.cursor(dictionary=True)
+# ─────────────────── Utils ───────────────────
+def _same_host(a: str, b: str) -> bool:
     try:
-        cur.execute(f"""
-            SELECT id, user_id, organization_name, about_press, about_organization,
-                   organization_website, organization_phone, organization_email,
-                   press_lines_number, press_date
-            FROM {PR_FORM_TABLE}
-            WHERE id = %s
-            LIMIT 1
-        """, (rid,))
-        return cur.fetchone()
-    finally:
-        cur.close()
-        conn.close()
+        return urlparse(a).netloc == urlparse(b).netloc
+    except Exception:
+        return False
 
-# -------------------------
-# Prompt helpers
-# -------------------------
-def _build_topic(release: Dict[str, Any]) -> str:
-    return (
-        f"اكتب بيان للشركة {release.get('organization_name', 'غير محدد')} "
-        f"حيث محتوى البيان عن {release.get('about_press', 'غير محدد')} "
-        f"وبيانات التواصل "
-        f"{release.get('organization_phone', 'غير متوفر')}, "
-        f"{release.get('organization_email', 'غير متوفر')}, "
-        f"{release.get('organization_website', 'غير متوفر')} "
-        f"بتاريخ {release.get('press_date', 'غير محدد')} "
-        f"واذكر «حول الشركة» في النهاية: {release.get('about_organization', 'غير متوفر')} "
-        f"ويكون عدد الأسطر {release.get('press_lines_number', 'غير محدد')}"
-    )
+def load_examples_from_json(json_path: str = "example_profiles.json"):
+    try:
+        with open(json_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            if isinstance(data, list):
+                return [x if isinstance(x, str) else json.dumps(x, ensure_ascii=False) for x in data]
+            return [json.dumps(data, ensure_ascii=False)]
+    except Exception as e:
+        log.info(f"⚠ examples file issue: {e} — using defaults")
+        return [
+            "شركة  — من نحن، الرؤية، الرسالة، خدمات أساسية، لماذا نحن، معلومات التواصل.",
+            "شركة  — من نحن، رؤيتنا، رسالتنا، حلول متقدمة، أسلوب العمل، بيانات الاتصال."
+        ]
 
-def _default_context() -> str:
-    return f""" (Press Release Structure) الجزء الأول: الهيكلية العامة للبيان الصحفي
-           1.	 فى سطر منفرد العنوان الرئيسي (Headline)
-          الوظيفة: يجذب انتباه الصحفي والقارئ في أقل من 5 ثوانٍ.
-          السمات: مباشر، مختصر، خبري، دون مبالغة، يعكس جوهر البيان.
-          الطول الأمثل: 6–12 كلمة (يفضل أقل من 90 حرفًا).
-          نموذج عالمي معتمد:
-          بدلًا من: "حدث رائع وفريد من نوعه في السوق السعودي"
-          استخدم: "شركة [X] تطلق أول منصة رقمية للتمويل العقاري في السعودية"
-          2.	العنوان الفرعي (Subheadline) – اختياري
-          الوظيفة: توسيع الفكرة الرئيسية، إضافة عنصر جديد (رقم، توقيت، فائدة).
-          الطول الأمثل: لا يزيد عن سطرين.
-          النبرة: معلوماتية، مكملة، دون تكرار العنوان الرئيسي.
-          3.	سطر التاريخ (Dateline)
-          الهيئة القياسية:
-           [التاريخ الكامل بصيغة يوم/شهر/سنة]
-          مثال:5 مايو 2025 
-          4.	الفقرة الافتتاحية (Lead Paragraph)
-          الوظيفة: تلخيص الخبر في جملة واحدة إلى ثلاث جمل.
-          القاعدة الذهبية: الإجابة عن الأسئلة الست: من؟ ماذا؟ متى؟ أين؟ لماذا؟ كيف؟
-          نغمة الصياغة: مباشرة، دون مقدمات أو سياقات تحليلية.
-          5.	جسم البيان (Body)
-          الفقرة الرابعة: تفاصيل إضافية .
-          7.	معلومات التواصل (Media Contact)
-          البريد الإلكتروني الرسمي
-          رقم الهاتف المباشر
-          8.	السطر الختامي (End Notation)
-          يُفضل عالميًا استخدام:
-          أو
-          -	انتهى –
-          لإعلام الصحفي بانتهاء البيان.
-          الجزء الثاني: قواعد الصياغة الاحترافية لكل قسم في البيان الصحفي
-          (Writing Best Practices by Section)
-          1.	العنوان الرئيسي (Headline)
-          أفضل الممارسات:
-          ابدأ بالفعل أو الكلمة المفتاحية.
-          تجنب الكلمات الإنشائية مثل: "متميز"، "رائع"، "فريد"، واستبدلها بمعلومة أو إنجاز ملموس.
-          لا تضع نقطًا في نهاية العنوان.
-          تجنب الحروف الكبيرة إلا في أسماء العلم أو الاختصارات الرسمية.
-          مثال سيئ:
-          "نجاح ساحق لشركتنا في إطلاق منتج مذهل"
-          مثال احترافي:
-          "شركة نماء تطلق أول منصة إلكترونية لتوزيع المنتجات الزراعية في الخليج"
-          2.	العنوان الفرعي (Subheadline)
-          أفضل الممارسات:
-          يشرح قيمة أو نتيجة أو خلفية للعنوان.
-          يضيف رقمًا أو إشارة زمنية أو توسيعًا جغرافيًا.
-          لا يكرر كلمات العنوان.
-          مثال جيد:
-          "المنصة الجديدة توفر للمزارعين أدوات رقمية لتوسيع قاعدة عملائهم ورفع دخلهم بنسبة 30٪"
-          3.	الفقرة الافتتاحية (Lead Paragraph)
-          أفضل الممارسات:
-          الصياغة كأنها خبر صحفي مستقل.
-          دون تعبيرات ترحيبية أو مقدمات أدبية.
-          لا تبدأ بـ"يسرّ الشركة" أو "أعلنت اليوم"، بل ابدأ بالحدث مباشرة.
-          مثال جيد:
-          "أطلقت شركة نماء اليوم منصتها الإلكترونية الجديدة التي تتيح للمزارعين بيع منتجاتهم مباشرةً للمستهلكين في مختلف مناطق الخليج."
-          أخطاء شائعة:
-          استخدام "نحن" أو ضمير المتكلم.
-          التقديم الطويل قبل الدخول في الخبر.
-          """
-    
-def generate_article_based_on_topic(topic: str, context: str, release: dict) -> str:
-    prompt = f"""
-أنت صحفي عربي محترف في مؤسسة إعلامية بارزة، متخصص في كتابة البيانات الصحفية بلغة عربية فصيحة ودقيقة.
-اكتب البيان بصيغة "تعلن شركة ..." وليس "أعلنت"، بصوت المؤسسة، والتزم بالبيانات والتفاصيل الممنوحة وصغها في صورة بيان.
-عدد الأسطر المطلوب: {release.get('press_lines_number', 'غير محدد')}
+def _clip(txt: Optional[str], n: int) -> str:
+    if not txt:
+        return ""
+    txt = txt.strip()
+    return txt if len(txt) <= n else txt[:n] + "…"
 
-تكوين البيان:
-- العنوان الرئيسي 
-- تاريخ اليوم بصيغة الوطن العربي.
-- اعتمادًا على موضوع: {topic} بتاريخ: {release.get('press_date', 'غير محدد')}
-- محتوى البيان.
-- ثم مباشرة السطر "معلومات للمحررين".
-- ثم في السطر التالي "حول الشركة": {release.get('about_organization', 'غير متوفر')}.
-- وفي نهاية البيان بيانات التواصل دون تأليف:
-  الهاتف: {release.get('organization_phone', 'غير متوفر')}
-  البريد الإلكتروني: {release.get('organization_email', 'غير متوفر')}
-  الموقع: {release.get('organization_website', 'غير متوفر')}
+# ─────────────────── OpenAI prompts ───────────────────
+def generate_profile_text(data: dict, examples: List[str]) -> str:
+    """
+    data is a dict from fetch_profile_data(user_id): e.g.
+    {
+      'organization_name': ..., 'vision': ..., 'message': ..., 'about_organization': ...,
+      'services': ..., 'phone': ..., 'website': ..., 'email': ..., 'location': ..., 'more_information': ...
+    }
+    """
+    examples_text = "\n\n".join(examples[:2])
+    # Serialize the latest row as compact JSON for the prompt
+    data_json = json.dumps(data, ensure_ascii=False , default=str)
 
-استخدم المعلومات التالية كنموذج لكيفية صياغة البيان (إرشادات بنية وصياغة):
-{context}
-""".strip()
+    examples_text = "\n\n".join(examples[:2])  # نرسل أول مثالين فقط لتقليل الطول
+    prompt=f'''أنت خبير متخصص في كتابة الملفات التعريفية للشركات (Company Profiles)، وتعمل كمستشار استراتيجي في تطوير الهوية المؤسسية والعرض الاحترافي للخدمات.
+ستتلقى مجموعة من الملفات تتضمن محتوى خام وتعريفي من عدة شركات{examples_text}، دورك هو أن تحلل هذه الملفات بدقة، وتستخلص منها الأسلوب الاحترافي الأمثل لبناء ملف تعريفي متميز ومتكامل لشركة معلوماتها فى {data_json}مع ذكر الرؤيه والرساله فى فقرات منفصله .
+المطلوب:
+    كتابة ملف تعريفي احترافي للشركة بأسلوب عصري وجذاب، يُراعي اللغة المؤسسية، ويُبرز الهوية والمكانة التنافسية.
+    لا تعتمد على هيكل جاهز، بل ابتكر ترتيبًا منطقيًا وتدريجيًا للمحتوى يُناسب الشركة ومجالها.
+    اجعل الملف غنيًا بالتفاصيل، ومتوازنًا بين النصوص التسويقية، والمحتوى المعلوماتي، والمزايا التنافسية.
+    ضمّن أقسامًا مثل: من نحن، ما الذي نُقدمه، لماذا نحن، أعمالنا، خدماتنا، أسلوبنا، وغيرها إن وجدت مناسبة.
+    اجعل الكتابة سلسة، متماسكة، ومتناسقة بصريًا ومضمونيًا.
+    افترض أنك تكتب الملف ليُستخدم في طباعة فاخرة، وعرض إلكتروني، وعرض تقديمي.
+سيُستخدم الملف لاحقًا من قِبل جهات استثمارية وعملاء محتملين، لذا يجب أن يُجسّد هوية الشركة وقوتها.
+'''
 
-    response = client.chat.completions.create(
-        model="gpt-4o-mini",
+    resp = client.chat.completions.create(
+        model="gpt-4o",
         messages=[{"role": "user", "content": prompt}],
+        temperature=0.7,
     )
-    return response.choices[0].message.content.strip()
+    return resp.choices[0].message.content
 
-# -------------------------
-# Generate: latest row by user
-# -------------------------
-@app.get("/generate_article/{user_id}")
-async def generate_article(user_id: str):
+# ─────────────────── JWT helpers (for chat) ───────────────────
+def _make_jwt(session_id: str, user_id: int) -> str:
+    now = int(time.time())
+    payload = {"sid": session_id, "uid": user_id, "iat": now, "exp": now + TOKEN_TTL_SEC}
+    return jwt.encode(payload, JWT_SECRET, algorithm="HS256")
+
+def _resolve_token(auth: Optional[str], x_token: Optional[str], body_token: Optional[str]) -> str:
+    if auth and auth.startswith("Bearer "):
+        t = auth.split(" ", 1)[1].strip()
+        if t: return t
+    if x_token and x_token.strip():
+        return x_token.strip()
+    if body_token and str(body_token).strip():
+        return str(body_token).strip()
+    raise HTTPException(status_code=401, detail="Missing token")
+
+def _verify_jwt_any(auth: Optional[str], x_token: Optional[str], body_token: Optional[str]):
+    tok = _resolve_token(auth, x_token, body_token)
     try:
-        rows = fetch_press_releases(user_id)  # must include 'id' in rows
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"DB fetch error: {e}")
+        jwt.decode(tok, JWT_SECRET, algorithms=["HS256"], leeway=30)
+    except jwt.ExpiredSignatureError as e:
+        log.info(f"Auth failed: {type(e).__name__} – {e}")
+        raise HTTPException(status_code=401, detail="Expired token")
+    except jwt.InvalidTokenError as e:
+        log.info(f"Auth failed: {type(e).__name__} – {e}")
+        raise HTTPException(status_code=401, detail="Invalid token")
 
-    if not rows:
-        return {"error": "قائمة الإصدارات فارغة. لا يوجد بيانات."}
-
-    release = rows[-1]
-    request_id = release.get("id")
-
-    topic = _build_topic(release)
-    context = _default_context()
-
+# ─────────────────── Middleware: echo request id ───────────────────
+@app.middleware("http")
+async def add_request_id_header(request: Request, call_next):
+    rid = request.headers.get("X-Request-ID") or request.query_params.get("request_id")
+    start = time.time()
     try:
-        article = generate_article_based_on_topic(topic, context, release)
+        response = await call_next(request)
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"LLM error: {e}")
+        # ensure rid is present even on errors
+        response = JSONResponse({"detail": str(e)}, status_code=500)
+    if rid:
+        response.headers["X-Request-ID"] = str(rid)
+    dur = int((time.time() - start) * 1000)
+    log.info(f"[{rid or '-'}] {request.method} {request.url.path} -> {response.status_code} in {dur}ms")
+    return response
 
+# ─────────────────── Health ───────────────────
+@app.get("/health")
+def health():
+    return {"ok": True}
+
+# ─────────────────── Generator endpoint ───────────────────
+@app.get("/profile-generating-tool/{user_id}")
+def profile_generating_tool(
+    user_id: int,
+    request_id: Optional[int] = Query(None, description="Optional request id"),
+    x_request_id: Optional[str] = Header(None),
+):
+    """
+    Used by WP plugin to fetch the generated profile for the latest form data row.
+    It returns JSON: { "generated_profile": "..." }
+    The plugin itself will store into wpl3_profile_result with input_type='Using FORM'.
+    """
+    rid = x_request_id or request_id
     try:
-        update_press_release(
-            user_id=release["user_id"],
-            organization_name=release.get("organization_name", ""),
-            article=article,
-            request_id=request_id,
-        )
+        rows = fetch_profile_data(user_id)
+        if not rows:
+            raise HTTPException(status_code=404, detail="لا توجد بيانات للمستخدم.")
+        data = rows[-1]
+
+        loaded_examples = load_examples_from_json()
+        generated_profile = generate_profile_text(data, loaded_examples)
+        #save_data= insert_generated_profile(user_id,data['organization_name'],generated_profile)
+
+        # Avoid duplicate writes: plugin is already saving the result row
+        '''if API_WRITE_TO_DB:
+            try:
+                insert_generated_profile(
+                    user_id,
+                    data.get("organization_name") or None,
+                    generated_profile
+                )
+            except Exception as e:
+                log.info(f"⚠ insert_generated_profile failed (non-fatal): {e}")'''
+
+        resp = JSONResponse(content={"generated_profile": generated_profile})
+        if rid:
+            resp.headers["X-Request-ID"] = str(rid)
+        return resp
+
+    except HTTPException:
+        raise
     except Exception as e:
-        return {"generated_content": article, "warning": f"DB update failed: {e}", "request_id": request_id}
+        log.exception("generator error")
+        resp = JSONResponse(content={"error": str(e)}, status_code=500)
+        if rid:
+            resp.headers["X-Request-ID"] = str(rid)
+        return resp
 
-    return {"generated_content": article, "request_id": request_id}
+# ─────────────────── Chat models ───────────────────
+from pydantic import BaseModel, Field
 
-# -------------------------
-# Generate: by rid (exact row)
-# -------------------------
-@app.get("/generate_article_by_rid/{rid}")
-async def generate_article_by_rid(rid: int):
-    row = _fetch_release_by_id(rid)
-    if not row:
-        raise HTTPException(status_code=404, detail="لم يتم العثور على هذا الطلب.")
+class VisibleValue(BaseModel):
+    id: Optional[int] = None
+    article: Optional[str] = None
+    request_id: Optional[int] = None
+    website: Optional[str] = None
 
-    release = row
-    request_id = release.get("id")
-
-    topic = _build_topic(release)
-    context = _default_context()
-
-    try:
-        article = generate_article_based_on_topic(topic, context, release)
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"LLM error: {e}")
-
-    try:
-        update_press_release(
-            user_id=release["user_id"],
-            organization_name=release.get("organization_name", ""),
-            article=article,
-            request_id=request_id,
-        )
-    except Exception as e:
-        return {"generated_content": article, "warning": f"DB update failed: {e}", "request_id": request_id}
-
-    return {"generated_content": article, "request_id": request_id}
-
-# -------------------------
-# Chat (session + streaming)
-# -------------------------
 class SessionIn(BaseModel):
     user_id: int
-    wp_nonce: Optional[str] = None
+    request_id: Optional[int] = None
 
 class SessionOut(BaseModel):
     session_id: str
     token: str
-
-class VisibleValue(BaseModel):
-    id: Optional[int] = None            # = request_id
-    request_id: Optional[int] = None    # alias
-    organization_name: Optional[str] = None
-    about_press: Optional[str] = None
-    press_date: Optional[str] = None
-    organization_phone: Optional[str] = None
-    organization_email: Optional[str] = None
-    organization_website: Optional[str] = None
-    about_organization: Optional[str] = None
-    press_lines_number: Optional[str] = None
-    article: Optional[str] = None
+    request_id: Optional[int] = None
 
 class ChatIn(BaseModel):
     session_id: str
     user_id: int
     message: str
     visible_values: List[VisibleValue] = Field(default_factory=list)
+    request_id: Optional[int] = None
+    token: Optional[str] = None  # fallback if proxy strips Authorization header
 
-def _make_jwt(session_id: str, user_id: int) -> str:
-    payload = {
-        "sid": session_id,
-        "uid": user_id,
-        "iat": int(time.time()),
-        "exp": int(time.time()) + 60 * 60 * 2,
-    }
-    return jwt.encode(payload, JWT_SECRET, algorithm="HS256")
-
-def _verify_jwt(bearer: Optional[str]):
-    if not bearer or not bearer.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Missing Authorization header")
-    token = bearer.split(" ", 1)[1]
-    try:
-        jwt.decode(token, JWT_SECRET, algorithms=["HS256"])
-    except jwt.InvalidTokenError:
-        raise HTTPException(status_code=401, detail="Invalid token")
+# ─────────────────── Chat endpoints (under the same base path) ───────────────────
+@app.post("/session", response_model=SessionOut)
+def create_session(body: SessionIn, x_request_id: Optional[str] = Header(None)):
+    rid = x_request_id or body.request_id
+    sid = str(uuid.uuid4())
+    token = _make_jwt(sid, body.user_id)
+    resp = SessionOut(session_id=sid, token=token, request_id=rid)
+    return resp
 
 def _values_to_context(values: List[VisibleValue]) -> str:
     if not values:
         return "لا توجد بيانات مرئية حالياً لهذا المستخدم."
     v = values[0]
-    parts: List[str] = []
-    rid = v.request_id or v.id
-    if rid:                    parts.append(f"رقم الطلب: {rid}")
-    if v.organization_name:    parts.append(f"اسم المنظمة: {v.organization_name}")
-    if v.about_press:          parts.append(f"عن البيان: {v.about_press}")
-    if v.press_date:           parts.append(f"تاريخ البيان: {v.press_date}")
-    if v.organization_phone:   parts.append(f"الهاتف: {v.organization_phone}")
-    if v.organization_email:   parts.append(f"البريد: {v.organization_email}")
-    if v.organization_website: parts.append(f"الموقع: {v.organization_website}")
-    if v.about_organization:   parts.append(f"حول المنظمة: {v.about_organization}")
-    if v.press_lines_number:   parts.append(f"عدد الأسطر المرغوب: {v.press_lines_number}")
+    lines = []
+    if v.request_id:
+        lines.append(f"معرّف الطلب (RID): {v.request_id}")
+    if v.website:
+        lines.append(f"الموقع: {v.website}")
     if v.article:
-        article = v.article
-        if len(article) > 1200:
-            article = article[:1200] + "…"
-        parts.append(f"النص الحالي للمقال: {article}")
-    return " | ".join(parts) if parts else "لا توجد تفاصيل كافية."
-
-@app.post("/session", response_model=SessionOut)
-def create_session(body: SessionIn):
-    sid = str(uuid.uuid4())
-    token = _make_jwt(sid, body.user_id)
-    return SessionOut(session_id=sid, token=token)
+        lines.append("المحتوى الحالي (مختصر):")
+        lines.append(_clip(v.article, 6000))
+    if not lines:
+        lines.append("لا توجد تفاصيل كافية.")
+    return "\n".join(lines)
 
 @app.post("/chat")
-def chat(body: ChatIn, authorization: Optional[str] = Header(None)):
-    _verify_jwt(authorization)
+def chat(
+    body: ChatIn,
+    authorization: Optional[str] = Header(None),
+    x_session_token: Optional[str] = Header(None),
+    x_request_id: Optional[str] = Header(None),
+):
+    # Auth
+    _verify_jwt_any(authorization, x_session_token, body.token)
+
+    rid = x_request_id or body.request_id
     context = _values_to_context(body.visible_values)
     sys_prompt = (
-        "أنت مساعد موثوق يجيب بالاعتماد على البيانات المرئية الحالية للمستخدم. "
-        "إذا كانت المعلومة غير متوفرة في البيانات المرئية فاذكر ذلك صراحةً "
-        "واقترح ما يمكن فعله للحصول عليها.\n\n"
-        f"البيانات المرئية الحالية: {context}"
+        "أنت مساعد موثوق يجيب بدقة بالاعتماد على البيانات المرئية الحالية للمستخدم. "
+        "إذا كانت المعلومة غير متوفرة في البيانات فاذكر ذلك صراحةً "
+        "واقترح خطوات عملية للحصول عليها.\n\n"
+        f"(RID={rid})\n"
+        f"البيانات المرئية الحالية:\n{context}"
     )
     user_msg = body.message or ""
 
     def stream():
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            temperature=0.7,
-            messages=[
-                {"role": "system", "content": sys_prompt},
-                {"role": "user",   "content": user_msg}
-            ],
-            stream=True
-        )
-        for chunk in response:
-            if chunk.choices and getattr(chunk.choices[0].delta, "content", None):
-                yield chunk.choices[0].delta.content
+        try:
+            response = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": sys_prompt},
+                    {"role": "user",   "content": user_msg},
+                ],
+                stream=True,
+            )
+            for chunk in response:
+                try:
+                    # OpenAI SDK (responses.create, delta.content)
+                    choice = chunk.choices[0]
+                    delta = getattr(choice, "delta", None)
+                    content = getattr(delta, "content", None)
+                    if content:
+                        yield content
+                except Exception:
+                    # ignore malformed chunks
+                    continue
+        except Exception as e:
+            # surface the error at the end of the stream
+            yield f"\n[خطأ]: {str(e)}"
 
-    return StreamingResponse(stream(), media_type="text/plain")
+    headers = {}
+    if rid:
+        headers["X-Request-ID"] = str(rid)
+    return StreamingResponse(stream(), media_type="text/plain", headers=headers)
