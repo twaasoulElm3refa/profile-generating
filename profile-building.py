@@ -160,7 +160,7 @@ def profile_generating_tool(
     """
     Used by WP plugin to fetch the generated profile for the latest form data row.
     It returns JSON: { "generated_profile": "..." }
-    The plugin itself will store into wpl3_profile_result with input_type='Using FORM'.
+    The plugin itself will store into A11i_profile_result with input_type='Using FORM'.
     """
     rid = x_request_id or request_id
     try:
@@ -299,3 +299,4 @@ def chat(
     if rid:
         headers["X-Request-ID"] = str(rid)
     return StreamingResponse(stream(), media_type="text/plain", headers=headers)
+
