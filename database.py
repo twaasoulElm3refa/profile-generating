@@ -6,11 +6,11 @@ import os
 
 load_dotenv()  # يبحث عن .env في مجلد المشروع الحالي
 
-db_host = os.getenv("db_host")
-db_port = os.getenv("db_port")
-db_user = os.getenv("db_user")
-db_password = os.getenv("db_password")
-db_name = os.getenv("db_name")
+db_name = os.getenv("DB_NAME")
+db_host = os.getenv("DB_HOST")
+db_user = os.getenv("DB_USER")
+db_password = os.getenv("DB_PASSWORD")
+db_port = int(os.getenv("DB_PORT", "3306"))
 
 
 def get_db_connection():
@@ -41,7 +41,7 @@ def fetch_profile_data(user_id: str ):
         cursor = connection.cursor(dictionary=True)
         query = """
         SELECT * 
-        FROM wpl3_profile_generating_tool
+        FROM A11i_profile_generating_tool
         WHERE user_id = %s 
         """
         cursor.execute(query, (user_id,))
@@ -60,7 +60,6 @@ def fetch_profile_data(user_id: str ):
             connection.close()
 
 
-
 def insert_generated_profile(user_id, organization_name, generated_profile, input_type='Using FORM',request_id=None):
     connection = get_db_connection()
     if connection is None:
@@ -69,7 +68,7 @@ def insert_generated_profile(user_id, organization_name, generated_profile, inpu
     try:
         cursor = connection.cursor()
         query = """
-        INSERT INTO wpl3_profile_result (user_id, organization_name, generated_profile,input_type,request_id)
+        INSERT INTO A11i_profile_result (user_id, organization_name, generated_profile,input_type,request_id)
         VALUES (%s, %s, %s , %s, %s)
         ON DUPLICATE KEY UPDATE generated_profile = VALUES(generated_profile)
         """
@@ -83,4 +82,3 @@ def insert_generated_profile(user_id, organization_name, generated_profile, inpu
         if connection.is_connected():
             cursor.close()
             connection.close()
-
